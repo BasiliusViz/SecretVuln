@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Trivy",
+          "semanticVersion": "0.50.0",
+          "rules": [
+            { "id": "CVE-2023-44487", "shortDescription": { "text": "HTTP/2 Rapid Reset DoS" }, "properties": { "tags": ["critical"] } },
+            { "id": "CVE-2021-44228", "shortDescription": { "text": "Log4Shell RCE" }, "properties": { "tags": ["critical"] } },
+            { "id": "CVE-2022-40897", "shortDescription": { "text": "setuptools ReDoS" }, "properties": { "tags": ["medium"] } },
+            { "id": "CVE-2020-1747", "shortDescription": { "text": "PyYAML arbitrary code execution" }, "properties": { "tags": ["high"] } }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CVE-2023-44487",
+          "level": "error",
+          "message": { "text": "nghttp2: HTTP/2 Rapid Reset — отказ в обслуживании." },
+          "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "go.sum" }, "region": { "startLine": 120 } } }],
+          "properties": { "tags": ["critical"] },
+          "partialFingerprints": { "primaryLocationLineHash": "trv-001" }
+        },
+        {
+          "ruleId": "CVE-2021-44228",
+          "level": "error",
+          "message": { "text": "log4j-core: удалённое выполнение кода (Log4Shell)." },
+          "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "pom.xml" }, "region": { "startLine": 45 } } }],
+          "properties": { "tags": ["critical"] },
+          "partialFingerprints": { "primaryLocationLineHash": "trv-002" }
+        },
+        {
+          "ruleId": "CVE-2020-1747",
+          "level": "error",
+          "message": { "text": "PyYAML: выполнение произвольного кода через full_load." },
+          "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "requirements.txt" }, "region": { "startLine": 8 } } }],
+          "properties": { "tags": ["high"] },
+          "partialFingerprints": { "primaryLocationLineHash": "trv-003" }
+        },
+        {
+          "ruleId": "CVE-2022-40897",
+          "level": "warning",
+          "message": { "text": "setuptools: ReDoS в package_index." },
+          "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "requirements.txt" }, "region": { "startLine": 15 } } }],
+          "properties": { "tags": ["medium"] },
+          "partialFingerprints": { "primaryLocationLineHash": "trv-004" }
+        }
+      ]
+    }
+  ]
+}

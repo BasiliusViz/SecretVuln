@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: secretvuln
+      POSTGRES_PASSWORD: secretvuln
+      POSTGRES_DB: secretvuln
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secretvuln -d secretvuln"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9002:9000"   # S3 API (9000 занят wslrelay)
+      - "9001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Лёгкий LDAP для dev + встроенный веб-интерфейс на :17170 (admin/adminpassword).
+  # LDAP слушает :3890. База: dc=secretvuln,dc=local.
+  ldap:
+    image: lldap/lldap:stable
+    ports:
+      - "3890:3890"    # LDAP
+      - "17170:17170"  # Web UI
+    environment:
+      LLDAP_JWT_SECRET: dev-lldap-jwt-secret
+      LLDAP_KEY_SEED: dev-lldap-key-seed
+      LLDAP_LDAP_USER_PASS: adminpassword
+      LLDAP_LDAP_BASE_DN: dc=secretvuln,dc=local
+    volumes:
+      - lldap_data:/data
+
+  # Creates the default bucket on startup, then exits.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/sarif-imports
+      "
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  lldap_data:
