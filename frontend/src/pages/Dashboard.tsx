@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { apiFetch } from "../api/client";
-import { SEVERITY, SEVERITY_ORDER } from "../theme/severity";
+import { SEVERITY_ORDER, useSeverityColors } from "../theme/severity";
 
 interface Health {
   status: string;
@@ -20,6 +20,7 @@ export function Dashboard() {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
+  const severityColors = useSeverityColors();
 
   useEffect(() => {
     apiFetch("/api/v1/health")
@@ -56,15 +57,13 @@ export function Dashboard() {
             className="card"
             style={{
               padding: "10px 14px",
-              borderTop: `3px solid ${SEVERITY[sev].color}`,
+              borderTop: `3px solid ${severityColors[sev]}`,
               borderTopLeftRadius: 0,
               borderTopRightRadius: 0,
             }}
           >
-            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              {t(`severityPlural.${sev}`)}
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 600 }}>
+            <div className="section-label">{t(`severityPlural.${sev}`)}</div>
+            <div className="metric" style={{ color: severityColors[sev] }}>
               {stats ? (stats.by_severity[sev] ?? 0) : "—"}
             </div>
           </div>
@@ -89,8 +88,8 @@ export function Dashboard() {
         <div style={{ fontWeight: 500, marginBottom: 8 }}>{t("dashboard.newByWeek")}</div>
         <p style={{ color: "var(--text-muted)", margin: 0 }}>
           {stats && stats.total > 0
-            ? `${t("findings.count", { count: stats.total })}`
-            : t("findings.empty")}
+            ? `${t("vulns.count", { count: stats.total })}`
+            : t("vulns.empty")}
         </p>
       </div>
     </div>

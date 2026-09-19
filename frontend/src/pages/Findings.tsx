@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { apiFetch } from "../api/client";
@@ -54,7 +54,7 @@ export function Findings() {
 
   return (
     <div>
-      <h1>{t("findings.title")}</h1>
+      <h1>{t("vulns.title")}</h1>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
         <select
@@ -62,7 +62,7 @@ export function Findings() {
           value={severityFilter}
           onChange={(e) => setSeverityFilter(e.target.value)}
         >
-          <option value="">{t("severity.label")}: {t("findings.all")}</option>
+          <option value="">{t("severity.label")}: {t("vulns.all")}</option>
           {SEVERITY_ORDER.map((sev) => (
             <option key={sev} value={sev}>{t(`severity.${sev}`)}</option>
           ))}
@@ -72,14 +72,14 @@ export function Findings() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
-          <option value="">{t("status.label")}: {t("findings.all")}</option>
+          <option value="">{t("status.label")}: {t("vulns.all")}</option>
           {statuses.map((st) => (
             <option key={st} value={st}>{t(`status.${st}`)}</option>
           ))}
         </select>
         {findings !== null && (
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {t("findings.count", { count: findings.length })}
+            {t("vulns.count", { count: findings.length })}
           </span>
         )}
       </div>
@@ -91,21 +91,21 @@ export function Findings() {
           </p>
         ) : findings.length === 0 ? (
           <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>
-            {t("findings.empty")}
+            {t("vulns.empty")}
           </p>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)", textAlign: "left" }}>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("findings.number")}</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.number")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("severity.label")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500, minWidth: 200 }}>
-                  {t("findings.title")}
+                  {t("vulns.title")}
                 </th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("findings.scanner")}</th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("findings.file")}</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.scanner")}</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.file")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("status.label")}</th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("findings.lastSeen")}</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.lastSeen")}</th>
               </tr>
             </thead>
             <tbody>
@@ -147,7 +147,7 @@ export function Findings() {
                   >
                     {f.file_path
                       ? `${f.file_path}${f.line_start ? `:${f.line_start}` : ""}`
-                      : "—"}
+                      : "вЂ”"}
                   </td>
                   <td style={{ padding: "8px 12px", fontSize: 12 }}>
                     {t(`status.${f.status}`)}

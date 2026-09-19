@@ -1,7 +1,151 @@
+/* Пять тем: amber (по умолчанию), cyber, indigo, matrix, light.
+   Переключение — атрибутом data-theme на <html> (см. theme/ThemeContext.tsx).
+   Правила палитр и контраста — в DESIGN.md. */
+
 :root {
   --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", Consolas, monospace;
+  --font-display: "JetBrains Mono", Consolas, monospace;
 
+  --radius: 6px;
+  --radius-lg: 8px;
+}
+
+/* --- Янтарный терминал (по умолчанию) --- */
+:root,
+[data-theme="amber"] {
+  --bg-page: #0a0705;
+  --bg-card: #130e07;
+  --bg-sidebar: #0d0906;
+  --border: #3a2b12;
+  --text-primary: #ebdcc0;
+  --text-secondary: #b49a6e;
+  --text-muted: #8a6a3a;
+  --accent: #ffb02e;
+  --on-accent: #1a1206;
+  --accent-bg: #2a1c06;
+  --grid: rgba(255, 176, 46, 0.05);
+  --glow: 0 0 10px rgba(255, 176, 46, 0.45);
+
+  --sev-critical: #ff4b3e;
+  --sev-high: #ff8a3d;
+  --sev-medium: #ffd166;
+  --sev-low: #58c7f3;
+  --sev-info: #8a8070;
+
+  --sev-critical-bg: #3a1210;
+  --sev-critical-text: #ffb3ac;
+  --sev-high-bg: #3a1e08;
+  --sev-high-text: #ffc79b;
+  --sev-medium-bg: #382b08;
+  --sev-medium-text: #ffe29a;
+  --sev-low-bg: #0c2a38;
+  --sev-low-text: #a9dcf5;
+  --sev-info-bg: #2a251c;
+  --sev-info-text: #cfc4ac;
+}
+
+/* --- Кибер-бирюза --- */
+[data-theme="cyber"] {
+  --bg-page: #05090b;
+  --bg-card: #0a1416;
+  --bg-sidebar: #071012;
+  --border: #134a48;
+  --text-primary: #cfe9e6;
+  --text-secondary: #7fb3ae;
+  --text-muted: #4e7a76;
+  --accent: #19d3c5;
+  --on-accent: #04201e;
+  --accent-bg: #07282a;
+  --grid: rgba(25, 211, 197, 0.05);
+  --glow: 0 0 10px rgba(25, 211, 197, 0.5);
+
+  --sev-critical: #ff2e63;
+  --sev-high: #ff8a3d;
+  --sev-medium: #f5d547;
+  --sev-low: #4fc3f7;
+  --sev-info: #7a8c8a;
+
+  --sev-critical-bg: #3a0a1b;
+  --sev-critical-text: #ffa8c0;
+  --sev-high-bg: #3a1e08;
+  --sev-high-text: #ffc79b;
+  --sev-medium-bg: #34300a;
+  --sev-medium-text: #f7e88f;
+  --sev-low-bg: #07293a;
+  --sev-low-text: #a9dcf5;
+  --sev-info-bg: #1e2726;
+  --sev-info-text: #c2cfcd;
+}
+
+/* --- Индиго --- */
+[data-theme="indigo"] {
+  --bg-page: #0b1020;
+  --bg-card: #141a32;
+  --bg-sidebar: #0e1428;
+  --border: #2b3566;
+  --text-primary: #dce0f5;
+  --text-secondary: #9aa3d0;
+  --text-muted: #6e76a8;
+  --accent: #8b7bff;
+  --on-accent: #0b1020;
+  --accent-bg: #1b1b44;
+  --grid: rgba(139, 123, 255, 0.04);
+  --glow: 0 0 10px rgba(139, 123, 255, 0.45);
+
+  --sev-critical: #ff5c8a;
+  --sev-high: #ff9a52;
+  --sev-medium: #ffd166;
+  --sev-low: #5ac8fa;
+  --sev-info: #8a93b8;
+
+  --sev-critical-bg: #33112a;
+  --sev-critical-text: #ffb3c9;
+  --sev-high-bg: #33200f;
+  --sev-high-text: #ffcfa6;
+  --sev-medium-bg: #33290f;
+  --sev-medium-text: #ffe7a6;
+  --sev-low-bg: #0f2a3d;
+  --sev-low-text: #b0e2fb;
+  --sev-info-bg: #1e2340;
+  --sev-info-text: #c3c9e8;
+}
+
+/* --- Матрица --- */
+[data-theme="matrix"] {
+  --bg-page: #030806;
+  --bg-card: #08150e;
+  --bg-sidebar: #05100a;
+  --border: #13452c;
+  --text-primary: #bff5d6;
+  --text-secondary: #6fbf95;
+  --text-muted: #3f7a5a;
+  --accent: #00ff8c;
+  --on-accent: #02180f;
+  --accent-bg: #052e1c;
+  --grid: rgba(0, 255, 140, 0.05);
+  --glow: 0 0 10px rgba(0, 255, 140, 0.45);
+
+  --sev-critical: #ff3b5c;
+  --sev-high: #ff9147;
+  --sev-medium: #e8e337;
+  --sev-low: #59d0ff;
+  --sev-info: #6e8a7c;
+
+  --sev-critical-bg: #350913;
+  --sev-critical-text: #ffafbd;
+  --sev-high-bg: #33200f;
+  --sev-high-text: #ffcfa6;
+  --sev-medium-bg: #2e2e08;
+  --sev-medium-text: #efec9a;
+  --sev-low-bg: #082736;
+  --sev-low-text: #abdffa;
+  --sev-info-bg: #16241c;
+  --sev-info-text: #bbd3c6;
+}
+
+/* --- Светлая --- */
+[data-theme="light"] {
   --bg-page: #f8f8f7;
   --bg-card: #ffffff;
   --bg-sidebar: #f1f1ef;
@@ -10,10 +154,16 @@
   --text-secondary: #5f5e5a;
   --text-muted: #8b8a85;
   --accent: #185fa5;
+  --on-accent: #ffffff;
   --accent-bg: #e6f1fb;
+  --grid: transparent;
+  --glow: none;
 
-  --radius: 8px;
-  --radius-lg: 12px;
+  --sev-critical: #a32d2d;
+  --sev-high: #d85a30;
+  --sev-medium: #ba7517;
+  --sev-low: #378add;
+  --sev-info: #888780;
 
   --sev-critical-bg: #fcebeb;
   --sev-critical-text: #791f1f;
@@ -27,29 +177,6 @@
   --sev-info-text: #444441;
 }
 
-[data-theme="dark"] {
-  --bg-page: #161618;
-  --bg-card: #1f1f23;
-  --bg-sidebar: #1b1b1e;
-  --border: #34343a;
-  --text-primary: #ededed;
-  --text-secondary: #a5a5a0;
-  --text-muted: #77766f;
-  --accent: #85b7eb;
-  --accent-bg: #0c2f4e;
-
-  --sev-critical-bg: #501313;
-  --sev-critical-text: #f7c1c1;
-  --sev-high-bg: #4a1b0c;
-  --sev-high-text: #f5c4b3;
-  --sev-medium-bg: #412402;
-  --sev-medium-text: #fac775;
-  --sev-low-bg: #042c53;
-  --sev-low-text: #b5d4f4;
-  --sev-info-bg: #2c2c2a;
-  --sev-info-text: #d3d1c7;
-}
-
 * {
   box-sizing: border-box;
 }
@@ -60,12 +187,24 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-primary);
-  background: var(--bg-page);
+  background-color: var(--bg-page);
+  /* Тонкая сетка «терминала»; в светлой теме --grid прозрачная */
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
+/* Заголовки и крупные числа — моноширинные, капсом, со свечением акцента.
+   В таблицах свечение не используется: читаемость важнее эффекта. */
 h1 {
-  font-size: 20px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow: var(--glow);
   margin: 0 0 16px;
 }
 
@@ -78,15 +217,31 @@ button {
   font-family: inherit;
   font-size: 13px;
   color: var(--text-primary);
-  background: var(--bg-card);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 6px 14px;
   cursor: pointer;
 }
 
-button:hover {
-  border-color: var(--text-muted);
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+select,
+input,
+textarea {
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .card {
@@ -94,4 +249,20 @@ button:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 16px 20px;
+}
+
+/* Метка раздела внутри страницы: «▪ ОТКРЫТЫЕ УЯЗВИМОСТИ» */
+.section-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* Крупное число метрики */
+.metric {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 500;
 }

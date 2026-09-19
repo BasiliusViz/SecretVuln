@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
+import { ThemeProvider } from "./theme/ThemeContext";
 import { Assets } from "./pages/Assets";
 import { Dashboard } from "./pages/Dashboard";
 import { Findings } from "./pages/Findings";
@@ -28,26 +29,31 @@ function LoginRoute() {
 
 export function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginRoute />} />
-          <Route
-            element={
-              <RequireAuth>
-                <Layout />
-              </RequireAuth>
-            }
-          >
-            <Route index element={<Dashboard />} />
-            <Route path="assets" element={<Assets />} />
-            <Route path="findings" element={<Findings />} />
-            <Route path="imports" element={<Imports />} />
-            <Route path="groups" element={<Groups />} />
-            <Route path="roles" element={<Roles />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<LoginRoute />} />
+            <Route
+              element={
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
+              }
+            >
+              <Route index element={<Dashboard />} />
+              <Route path="projects" element={<Assets />} />
+              <Route path="vulnerabilities" element={<Findings />} />
+              <Route path="imports" element={<Imports />} />
+              <Route path="groups" element={<Groups />} />
+              <Route path="roles" element={<Roles />} />
+              {/* старые адреса — чтобы не ломались сохранённые ссылки */}
+              <Route path="assets" element={<Navigate to="/projects" replace />} />
+              <Route path="findings" element={<Navigate to="/vulnerabilities" replace />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

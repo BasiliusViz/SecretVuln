@@ -1,34 +1,22 @@
-import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { useTheme } from "../theme/ThemeContext";
+import { THEMES, isThemeId } from "../theme/themes";
 
 const NAV_ITEMS = [
   { to: "/", key: "nav.dashboard", end: true },
-  { to: "/assets", key: "nav.assets" },
-  { to: "/findings", key: "nav.findings" },
+  { to: "/projects", key: "nav.projects" },
+  { to: "/vulnerabilities", key: "nav.vulns" },
   { to: "/imports", key: "nav.imports" },
   { to: "/groups", key: "nav.groups" },
   { to: "/roles", key: "nav.rolesNav" },
 ] as const;
 
-function useTheme() {
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = localStorage.getItem("sv-theme");
-    if (saved === "light" || saved === "dark") return saved;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  });
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("sv-theme", theme);
-  }, [theme]);
-  return { theme, toggle: () => setTheme((t) => (t === "dark" ? "light" : "dark")) };
-}
-
 export function Layout() {
   const { t } = useTranslation();
-  const { theme, toggle } = useTheme();
+  const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
 
   return (
@@ -45,11 +33,21 @@ export function Layout() {
           gap: 2,
         }}
       >
-        <div style={{ padding: "6px 10px", marginBottom: 14, fontWeight: 600, fontSize: 15 }}>
-          {t("app.name")}
-          <div style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>
-            {t("app.tagline")}
+        <div style={{ padding: "6px 10px", marginBottom: 14 }}>
+          <div
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 14,
+              fontWeight: 500,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "var(--accent)",
+              textShadow: "var(--glow)",
+            }}
+          >
+            {t("app.name")}
           </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("app.tagline")}</div>
         </div>
         {NAV_ITEMS.map((item) => (
           <NavLink
@@ -58,20 +56,34 @@ export function Layout() {
             end={"end" in item && item.end}
             style={({ isActive }) => ({
               padding: "8px 10px",
-              borderRadius: "var(--radius)",
-              fontSize: 13,
+              fontFamily: "var(--font-display)",
+              fontSize: 12,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
               fontWeight: isActive ? 500 : 400,
               color: isActive ? "var(--accent)" : "var(--text-secondary)",
               background: isActive ? "var(--accent-bg)" : "transparent",
+              borderLeft: isActive ? "2px solid var(--accent)" : "2px solid transparent",
             })}
           >
             {t(item.key)}
           </NavLink>
         ))}
         <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
-          <button onClick={toggle}>
-            {t("nav.theme")}: {theme === "dark" ? "тёмная" : "светлая"}
-          </button>
+          <label style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {t("nav.theme")}
+            <select
+              value={theme}
+              onChange={(e) => isThemeId(e.target.value) && setTheme(e.target.value)}
+              style={{ width: "100%", fontSize: 12, padding: "5px 6px", marginTop: 4 }}
+            >
+              {THEMES.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
           {user && (
             <div
               style={{

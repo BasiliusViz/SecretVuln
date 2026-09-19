@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { apiFetch } from "../api/client";
@@ -55,9 +55,9 @@ function CreateForm({
     if (res?.status === 201) {
       onDone();
     } else if (res?.status === 409) {
-      setError(t("assets.duplicate"));
+      setError(t("projects.duplicate"));
     } else {
-      setError(t("assets.saveError"));
+      setError(t("projects.saveError"));
     }
   };
 
@@ -74,19 +74,19 @@ function CreateForm({
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <div style={{ fontWeight: 500, marginBottom: 10 }}>
-        {parent ? t("assets.createChildIn", { name: parent.name }) : t("assets.createRoot")}
+        {parent ? t("projects.createChildIn", { name: parent.name }) : t("projects.createRoot")}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
         <input
           style={{ ...inputStyle, flex: "1 1 200px" }}
-          placeholder={t("assets.name")}
+          placeholder={t("projects.name")}
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoFocus
         />
         <input
           style={{ ...inputStyle, flex: "2 1 260px" }}
-          placeholder={t("assets.description")}
+          placeholder={t("projects.description")}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
@@ -94,9 +94,9 @@ function CreateForm({
       {error && <div style={{ color: "#A32D2D", fontSize: 12, marginBottom: 8 }}>{error}</div>}
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={submit} disabled={busy || !name.trim()}>
-          {t("assets.create")}
+          {t("projects.create")}
         </button>
-        <button onClick={onCancel}>{t("assets.cancel")}</button>
+        <button onClick={onCancel}>{t("projects.cancel")}</button>
       </div>
     </div>
   );
@@ -130,7 +130,7 @@ function TreeNode({
         }}
       >
         <span aria-hidden="true" style={{ color: "var(--text-muted)", fontSize: 12 }}>
-          {children.length > 0 ? "▸" : "·"}
+          {children.length > 0 ? "в–ё" : "В·"}
         </span>
         <span style={{ fontWeight: 500 }}>{node.name}</span>
         {node.description && (
@@ -150,14 +150,14 @@ function TreeNode({
         )}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6, flexShrink: 0 }}>
           <button style={{ fontSize: 12, padding: "2px 10px" }} onClick={() => onAddChild(node)}>
-            + {t("assets.addChild")}
+            + {t("projects.addChild")}
           </button>
           <button
             style={{ fontSize: 12, padding: "2px 10px", color: "var(--text-muted)" }}
             onClick={() => onDelete(node)}
-            aria-label={t("assets.delete")}
+            aria-label={t("projects.delete")}
           >
-            ✕
+            вњ•
           </button>
         </span>
       </div>
@@ -192,7 +192,7 @@ export function Assets() {
   }, [items]);
 
   const handleDelete = async (node: EntityNode) => {
-    if (!window.confirm(t("assets.deleteConfirm", { name: node.name }))) return;
+    if (!window.confirm(t("projects.deleteConfirm", { name: node.name }))) return;
     await apiFetch(`/api/v1/entities/${node.id}`, { method: "DELETE" });
     reload();
   };
@@ -202,14 +202,14 @@ export function Assets() {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1>{t("assets.title")}</h1>
+        <h1>{t("projects.title")}</h1>
         <button
           onClick={() => {
             setFormParent(null);
             setFormOpen(true);
           }}
         >
-          + {t("assets.createRoot")}
+          + {t("projects.createRoot")}
         </button>
       </div>
       {formOpen && (
@@ -230,7 +230,7 @@ export function Assets() {
             {t("common.loading")}
           </p>
         ) : roots.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>{t("assets.empty")}</p>
+          <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>{t("projects.empty")}</p>
         ) : (
           <div style={{ marginTop: -1 }}>
             {roots.map((node) => (

@@ -48,7 +48,20 @@ export function Login() {
       }}
     >
       <form onSubmit={submit} className="card" style={{ width: 360, maxWidth: "100%" }}>
-        <div style={{ marginBottom: 4, fontWeight: 600, fontSize: 18 }}>{t("app.name")}</div>
+        <div
+          style={{
+            marginBottom: 4,
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+            letterSpacing: "0.14em",
+            textTransform: "uppercase",
+            color: "var(--accent)",
+            textShadow: "var(--glow)",
+          }}
+        >
+          {t("app.name")}
+        </div>
         <div style={{ marginBottom: 20, fontSize: 13, color: "var(--text-muted)" }}>
           {t("auth.subtitle")}
         </div>
@@ -88,7 +101,7 @@ export function Login() {
             padding: "10px",
             fontSize: 14,
             fontWeight: 500,
-            color: "#fff",
+            color: "var(--on-accent)",
             background: "var(--accent)",
             borderColor: "var(--accent)",
           }}
