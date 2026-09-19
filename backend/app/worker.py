@@ -3,21 +3,30 @@
 from __future__ import annotations
 
 import logging
+import traceback
 from datetime import datetime, timezone
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
-from app.models.finding import Finding, FindingStatus
 from app.models.import_ import Import, ImportStatus
+from app.services.import_processing import apply_import
 from app.services.s3 import download_sarif
-from app.services.sarif import get_normalizer, parse_sarif
+from app.services.sarif import parse_sarif
 
 logger = logging.getLogger("arq.worker")
+
+
+async def _mark_failed(session_factory: async_sessionmaker, import_id: str, error: str) -> None:
+    async with session_factory() as db:
+        imp = await db.get(Import, import_id)
+        if imp:
+            imp.status = ImportStatus.failed
+            imp.error = error[-2000:]
+            imp.finished_at = datetime.now(timezone.utc)
+            await db.commit()
 
 
 async def process_import(ctx: dict, import_id: str) -> None:
@@ -33,86 +42,16 @@ async def process_import(ctx: dict, import_id: str) -> None:
         await db.commit()
 
         try:
-            content = download_sarif(imp.s3_key)
-            runs = parse_sarif(content)
-
-            created = 0
-            updated = 0
-            duplicates = 0
-            total_results = 0
-            scanner_name = None
-
-            for run in runs:
-                scanner_name = run.scanner
-                normalizer = get_normalizer(run.scanner)
-
-                for result in run.results:
-                    total_results += 1
-                    severity = normalizer.severity(result)
-
-                    existing = await db.scalar(
-                        select(Finding).where(
-                            Finding.entity_id == imp.entity_id,
-                            Finding.fingerprint == result.fingerprint,
-                        )
-                    )
-
-                    if existing:
-                        existing.last_seen = datetime.now(timezone.utc)
-                        existing.import_id = imp.id
-                        existing.raw = result.raw
-                        if existing.status == FindingStatus.fixed:
-                            existing.status = FindingStatus.new
-                            updated += 1
-                        else:
-                            duplicates += 1
-                    else:
-                        finding = Finding(
-                            entity_id=imp.entity_id,
-                            import_id=imp.id,
-                            title=result.title,
-                            description=result.description,
-                            severity=severity,
-                            status=FindingStatus.new,
-                            scanner=run.scanner,
-                            rule_id=result.rule_id,
-                            cwe=result.cwe,
-                            file_path=result.file_path,
-                            line_start=result.line_start,
-                            line_end=result.line_end,
-                            fingerprint=result.fingerprint,
-                            raw=result.raw,
-                        )
-                        db.add(finding)
-                        created += 1
-
-                await db.flush()
-
-            imp.scanner = scanner_name
+            runs = parse_sarif(download_sarif(imp.s3_key))
+            stats = await apply_import(db, imp, runs)
             imp.status = ImportStatus.done
-            imp.stats = {
-                "created": created,
-                "updated": updated,
-                "duplicates": duplicates,
-                "total_results": total_results,
-            }
+            imp.stats = stats
             imp.finished_at = datetime.now(timezone.utc)
             await db.commit()
-            logger.info(
-                "Import %s done: %d created, %d updated, %d duplicates",
-                import_id, created, updated, duplicates,
-            )
-
+            logger.info("Import %s done: %s", import_id, stats)
         except Exception:
             await db.rollback()
-            async with session_factory() as db2:
-                imp2 = await db2.get(Import, import_id)
-                if imp2:
-                    imp2.status = ImportStatus.failed
-                    import traceback
-                    imp2.error = traceback.format_exc()[-2000:]
-                    imp2.finished_at = datetime.now(timezone.utc)
-                    await db2.commit()
+            await _mark_failed(session_factory, import_id, traceback.format_exc())
             logger.exception("Import %s failed", import_id)
 
 
