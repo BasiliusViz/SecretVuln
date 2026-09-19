@@ -9,6 +9,7 @@ class FindingRead(BaseModel):
     model_config = {"from_attributes": True}
 
     id: uuid.UUID
+    number: int
     entity_id: uuid.UUID
     import_id: uuid.UUID | None
     title: str

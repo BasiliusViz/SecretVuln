@@ -3,7 +3,18 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -51,6 +62,13 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
     # The import that last touched this finding (first import if never re-seen)
     import_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("imports.id", ondelete="SET NULL"), index=True
+    )
+    # Короткий номер для ссылок (отображается как SV-<number>)
+    number: Mapped[int] = mapped_column(
+        BigInteger,
+        server_default=text("nextval('finding_number_seq')"),
+        unique=True,
+        nullable=False,
     )
 
     title: Mapped[str] = mapped_column(String(512), nullable=False)

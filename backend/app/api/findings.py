@@ -62,6 +62,18 @@ async def findings_stats(
     return {"total": total, "by_severity": by_severity, "by_status": by_status}
 
 
+@router.get("/findings/by-number/{number}", response_model=FindingRead)
+async def get_finding_by_number(
+    number: int,
+    _: object = Depends(require_permission("finding", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> Finding:
+    finding = await db.scalar(select(Finding).where(Finding.number == number))
+    if finding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    return finding
+
+
 @router.get("/findings/{finding_id}", response_model=FindingRead)
 async def get_finding(
     finding_id: uuid.UUID,
