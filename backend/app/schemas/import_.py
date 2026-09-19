@@ -12,6 +12,12 @@ class ImportRead(BaseModel):
     entity_id: uuid.UUID
     filename: str
     scanner: str | None
+    branch: str | None
+    commit_sha: str | None
+    pipeline_url: str | None
+    scan_scope: str | None
+    close_missing: bool
+    confirm_empty: bool
     status: str
     stats: dict[str, Any]
     error: str | None

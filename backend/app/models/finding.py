@@ -22,6 +22,7 @@ class FindingStatus(str, enum.Enum):
     new = "new"
     triaged = "triaged"
     confirmed = "confirmed"
+    in_progress = "in_progress"
     false_positive = "false_positive"
     risk_accepted = "risk_accepted"
     fixed = "fixed"
@@ -73,6 +74,11 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
     file_path: Mapped[str | None] = mapped_column(String(1024))
     line_start: Mapped[int | None] = mapped_column(Integer)
     line_end: Mapped[int | None] = mapped_column(Integer)
+
+    # Объём скана (например, имя образа) — определяет, какие находки закрывает автозакрытие
+    scan_scope: Mapped[str | None] = mapped_column(String(255))
+    # Коммит последнего импорта, в котором находку видели (для ссылки на строку кода)
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
 
     # Dedup key (from SARIF partialFingerprints or computed fallback)
     fingerprint: Mapped[str] = mapped_column(String(512), nullable=False)

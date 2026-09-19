@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,6 +33,15 @@ class Import(Base, UUIDPKMixin, TimestampMixin):
     s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     # Detected by the worker from SARIF tool.driver.name (semgrep, trivy, gitleaks, checkov, ...)
     scanner: Mapped[str | None] = mapped_column(String(100))
+    # Метаданные CI (все необязательные; ветка/коммит могут прийти из SARIF versionControlProvenance)
+    branch: Mapped[str | None] = mapped_column(String(255))
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
+    pipeline_url: Mapped[str | None] = mapped_column(String(1024))
+    scan_scope: Mapped[str | None] = mapped_column(String(255))
+    # Закрывать находки объёма, которых нет в отчёте
+    close_missing: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Разрешить автозакрытие по пустому отчёту (защита от сломанного сканера)
+    confirm_empty: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[ImportStatus] = mapped_column(
         Enum(ImportStatus, name="import_status"),
         default=ImportStatus.pending,

@@ -30,6 +30,8 @@ class Entity(Base, UUIDPKMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("entities.id", ondelete="CASCADE"), index=True
     )
     description: Mapped[str | None] = mapped_column(Text)
+    # Ветка, из которой строится бэклог; NULL — наследуется от родителя (или любая ветка)
+    default_branch: Mapped[str | None] = mapped_column(String(255))
     # Arbitrary user-defined fields (team, criticality, repo URL, ...)
     custom_fields: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 

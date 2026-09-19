@@ -26,6 +26,10 @@ class SarifResult:
 class SarifRun:
     scanner: str
     results: list[SarifResult] = field(default_factory=list)
+    # Из runs[].versionControlProvenance[0] — если сканер его заполнил
+    branch: str | None = None
+    revision: str | None = None
+    repository_uri: str | None = None
 
 
 def _extract_cwe(rule: dict[str, Any] | None) -> str | None:
@@ -78,7 +82,13 @@ def parse_sarif(content: bytes) -> list[SarifRun]:
         scanner = driver.get("name", "unknown")
         rules_map = _build_rules_map(run_data)
 
-        sarif_run = SarifRun(scanner=scanner)
+        vcp = (run_data.get("versionControlProvenance") or [{}])[0]
+        sarif_run = SarifRun(
+            scanner=scanner,
+            branch=vcp.get("branch"),
+            revision=vcp.get("revisionId"),
+            repository_uri=vcp.get("repositoryUri"),
+        )
 
         for result in run_data.get("results", []):
             rule_id = result.get("ruleId")

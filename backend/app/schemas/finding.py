@@ -21,6 +21,8 @@ class FindingRead(BaseModel):
     file_path: str | None
     line_start: int | None
     line_end: int | None
+    scan_scope: str | None
+    commit_sha: str | None
     fingerprint: str
     first_seen: datetime
     last_seen: datetime

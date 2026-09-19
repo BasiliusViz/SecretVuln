@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 from app.models.import_ import Import, ImportStatus
-from app.services.import_processing import apply_import
+from app.services.import_processing import ImportRejected, apply_import
 from app.services.s3 import download_sarif
 from app.services.sarif import parse_sarif
 
@@ -49,6 +49,10 @@ async def process_import(ctx: dict, import_id: str) -> None:
             imp.finished_at = datetime.now(timezone.utc)
             await db.commit()
             logger.info("Import %s done: %s", import_id, stats)
+        except ImportRejected as exc:
+            await db.rollback()
+            await _mark_failed(session_factory, import_id, str(exc))
+            logger.warning("Import %s rejected: %s", import_id, exc)
         except Exception:
             await db.rollback()
             await _mark_failed(session_factory, import_id, traceback.format_exc())
