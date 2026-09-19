@@ -2,7 +2,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.models.finding import FindingStatus
 
 
 class FindingRead(BaseModel):
@@ -28,3 +30,8 @@ class FindingRead(BaseModel):
     first_seen: datetime
     last_seen: datetime
     created_at: datetime
+
+
+class FindingStatusUpdate(BaseModel):
+    status: FindingStatus
+    reason: str | None = Field(default=None, max_length=2000)
