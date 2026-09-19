@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -9,8 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.finding import Finding, FindingStatus
+from app.models.finding_event import FindingEventType
 from app.models.import_ import Import
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
+from app.services.events import record_event
 from app.services.sarif import SarifRun, get_normalizer
 
 
@@ -56,12 +59,20 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                 existing.commit_sha = imp.commit_sha
                 if existing.status == FindingStatus.fixed:
                     existing.status = FindingStatus.new
+                    record_event(
+                        db, existing.id, FindingEventType.reopened,
+                        from_status=FindingStatus.fixed, to_status=FindingStatus.new,
+                        payload={"import_id": str(imp.id)},
+                    )
                     updated += 1
                 else:
                     duplicates += 1
             else:
+                # id задаём явно, чтобы сразу сослаться на находку из события
+                finding_id = uuid.uuid4()
                 db.add(
                     Finding(
+                        id=finding_id,
                         entity_id=imp.entity_id,
                         import_id=imp.id,
                         title=result.title,
@@ -79,6 +90,10 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                         commit_sha=imp.commit_sha,
                         raw=result.raw,
                     )
+                )
+                record_event(
+                    db, finding_id, FindingEventType.imported,
+                    to_status=FindingStatus.new, payload={"import_id": str(imp.id)},
                 )
                 created += 1
 

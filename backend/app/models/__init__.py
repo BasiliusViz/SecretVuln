@@ -1,6 +1,7 @@
 from app.models.base import Base
 from app.models.entity import Entity
 from app.models.finding import Finding, FindingStatus, Severity
+from app.models.finding_event import ActorType, FindingEvent, FindingEventType
 from app.models.import_ import Import, ImportStatus
 from app.models.role import Role
 from app.models.user import AuthSource, User
@@ -14,6 +15,9 @@ __all__ = [
     "Finding",
     "Severity",
     "FindingStatus",
+    "FindingEvent",
+    "FindingEventType",
+    "ActorType",
     "Import",
     "ImportStatus",
     "Role",

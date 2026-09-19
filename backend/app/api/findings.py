@@ -8,7 +8,9 @@ from app.api.deps import require_permission
 from app.db.session import get_db
 from app.models import Finding
 from app.models.finding import FindingStatus, Severity
+from app.models.finding_event import FindingEvent
 from app.schemas.finding import FindingRead
+from app.schemas.finding_event import FindingEventRead
 
 router = APIRouter(prefix="/api/v1", tags=["findings"])
 
@@ -70,6 +72,22 @@ async def get_finding(
     if finding is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
     return finding
+
+
+@router.get("/findings/{finding_id}/events", response_model=list[FindingEventRead])
+async def list_finding_events(
+    finding_id: uuid.UUID,
+    _: object = Depends(require_permission("finding", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> list[FindingEvent]:
+    if await db.get(Finding, finding_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    result = await db.scalars(
+        select(FindingEvent)
+        .where(FindingEvent.finding_id == finding_id)
+        .order_by(FindingEvent.created_at, FindingEvent.id)
+    )
+    return list(result)
 
 
 @router.patch("/findings/{finding_id}", response_model=FindingRead)
