@@ -1,0 +1,192 @@
+{
+    "$schema":  "https://json.schemastore.org/sarif-2.1.0.json",
+    "version":  "2.1.0",
+    "runs":  [
+                 {
+                     "tool":  {
+                                  "driver":  {
+                                                 "name":  "Semgrep",
+                                                 "semanticVersion":  "1.50.0",
+                                                 "rules":  [
+                                                               {
+                                                                   "id":  "python.lang.security.audit.dangerous-subprocess-use",
+                                                                   "shortDescription":  {
+                                                                                            "text":  "Опасный вызов subprocess с shell=True"
+                                                                                        },
+                                                                   "fullDescription":  {
+                                                                                           "text":  "Использование subprocess с shell=True может привести к инъекции команд."
+                                                                                       },
+                                                                   "properties":  {
+                                                                                      "tags":  [
+                                                                                                   "CWE-78",
+                                                                                                   "security",
+                                                                                                   "high"
+                                                                                               ]
+                                                                                  }
+                                                               },
+                                                               {
+                                                                   "id":  "python.lang.security.audit.hardcoded-password",
+                                                                   "shortDescription":  {
+                                                                                            "text":  "Захардкоженный пароль"
+                                                                                        },
+                                                                   "fullDescription":  {
+                                                                                           "text":  "В коде найден пароль в открытом виде."
+                                                                                       },
+                                                                   "properties":  {
+                                                                                      "tags":  [
+                                                                                                   "CWE-798",
+                                                                                                   "security",
+                                                                                                   "critical"
+                                                                                               ]
+                                                                                  }
+                                                               },
+                                                               {
+                                                                   "id":  "python.flask.security.xss.direct-use-of-jinja2",
+                                                                   "shortDescription":  {
+                                                                                            "text":  "Jinja2 без autoescaping"
+                                                                                        },
+                                                                   "properties":  {
+                                                                                      "tags":  [
+                                                                                                   "CWE-79",
+                                                                                                   "security",
+                                                                                                   "medium"
+                                                                                               ]
+                                                                                  }
+                                                               },
+                                                               {
+                                                                   "id":  "python.lang.best-practice.open-never-closed",
+                                                                   "shortDescription":  {
+                                                                                            "text":  "Файл открыт, но не закрыт"
+                                                                                        },
+                                                                   "properties":  {
+                                                                                      "tags":  [
+                                                                                                   "best-practice",
+                                                                                                   "low"
+                                                                                               ]
+                                                                                  }
+                                                               },
+                                                               {
+                                                                   "id":  "python.lang.security.audit.eval-detected",
+                                                                   "shortDescription":  {
+                                                                                            "text":  "Обнаружен eval()"
+                                                                                        },
+                                                                   "properties":  {
+                                                                                      "tags":  [
+                                                                                                   "CWE-95",
+                                                                                                   "security",
+                                                                                                   "high"
+                                                                                               ]
+                                                                                  }
+                                                               }
+                                                           ]
+                                             }
+                              },
+                     "results":  [
+                                     {
+                                         "ruleId":  "python.lang.security.audit.dangerous-subprocess-use",
+                                         "level":  "error",
+                                         "message":  {
+                                                         "text":  "subprocess.call вызван с shell=True — риск инъекции команд."
+                                                     },
+                                         "locations":  [
+                                                           {
+                                                               "physicalLocation":  {
+                                                                                        "artifactLocation":  {
+                                                                                                                 "uri":  "app/services/deploy.py"
+                                                                                                             },
+                                                                                        "region":  {
+                                                                                                       "startLine":  42,
+                                                                                                       "endLine":  42,
+                                                                                                       "snippet":  {
+                                                                                                                       "text":  "subprocess.call(cmd, shell=True)"
+                                                                                                                   }
+                                                                                                   }
+                                                                                    }
+                                                           }
+                                                       ],
+                                         "partialFingerprints":  {
+                                                                     "primaryLocationLineHash":  "smg-abc123"
+                                                                 }
+                                     },
+                                     {
+                                         "ruleId":  "python.lang.security.audit.hardcoded-password",
+                                         "level":  "error",
+                                         "message":  {
+                                                         "text":  "Захардкоженный пароль \u0027admin123\u0027 в исходном коде."
+                                                     },
+                                         "locations":  [
+                                                           {
+                                                               "physicalLocation":  {
+                                                                                        "artifactLocation":  {
+                                                                                                                 "uri":  "app/core/config.py"
+                                                                                                             },
+                                                                                        "region":  {
+                                                                                                       "startLine":  15,
+                                                                                                       "endLine":  15,
+                                                                                                       "snippet":  {
+                                                                                                                       "text":  "DB_PASSWORD = \u0027admin123\u0027"
+                                                                                                                   }
+                                                                                                   }
+                                                                                    }
+                                                           }
+                                                       ],
+                                         "partialFingerprints":  {
+                                                                     "primaryLocationLineHash":  "smg-bbb222"
+                                                                 }
+                                     },
+                                     {
+                                         "ruleId":  "python.flask.security.xss.direct-use-of-jinja2",
+                                         "level":  "warning",
+                                         "message":  {
+                                                         "text":  "Шаблон Jinja2 отрендерен без autoescaping."
+                                                     },
+                                         "locations":  [
+                                                           {
+                                                               "physicalLocation":  {
+                                                                                        "artifactLocation":  {
+                                                                                                                 "uri":  "app/templates/report.py"
+                                                                                                             },
+                                                                                        "region":  {
+                                                                                                       "startLine":  88,
+                                                                                                       "endLine":  90,
+                                                                                                       "snippet":  {
+                                                                                                                       "text":  "env = Environment(loader=FileSystemLoader(\u0027.\u0027))"
+                                                                                                                   }
+                                                                                                   }
+                                                                                    }
+                                                           }
+                                                       ],
+                                         "partialFingerprints":  {
+                                                                     "primaryLocationLineHash":  "smg-ddd444"
+                                                                 }
+                                     },
+                                     {
+                                         "ruleId":  "python.lang.best-practice.open-never-closed",
+                                         "level":  "note",
+                                         "message":  {
+                                                         "text":  "Файловый дескриптор со строки 23 не закрыт."
+                                                     },
+                                         "locations":  [
+                                                           {
+                                                               "physicalLocation":  {
+                                                                                        "artifactLocation":  {
+                                                                                                                 "uri":  "app/utils/parser.py"
+                                                                                                             },
+                                                                                        "region":  {
+                                                                                                       "startLine":  23,
+                                                                                                       "endLine":  23,
+                                                                                                       "snippet":  {
+                                                                                                                       "text":  "f = open(\u0027data.csv\u0027)"
+                                                                                                                   }
+                                                                                                   }
+                                                                                    }
+                                                           }
+                                                       ],
+                                         "partialFingerprints":  {
+                                                                     "primaryLocationLineHash":  "smg-fff666"
+                                                                 }
+                                     }
+                                 ]
+                 }
+             ]
+}

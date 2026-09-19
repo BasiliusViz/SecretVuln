@@ -8,6 +8,7 @@ import { SEVERITY_ORDER } from "../theme/severity";
 
 interface FindingRecord {
   id: string;
+  number: number;
   title: string;
   severity: Severity;
   status: string;
@@ -49,7 +50,7 @@ export function Findings() {
     padding: "6px 10px",
   };
 
-  const statuses = ["new", "triaged", "confirmed", "false_positive", "risk_accepted", "fixed"];
+  const statuses = ["new", "triaged", "confirmed", "in_progress", "false_positive", "risk_accepted", "fixed"];
 
   return (
     <div>
@@ -96,6 +97,7 @@ export function Findings() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)", textAlign: "left" }}>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("findings.number")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("severity.label")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500, minWidth: 200 }}>
                   {t("findings.title")}
@@ -109,6 +111,17 @@ export function Findings() {
             <tbody>
               {findings.map((f) => (
                 <tr key={f.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 12,
+                      color: "var(--text-secondary)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    SV-{f.number}
+                  </td>
                   <td style={{ padding: "8px 12px" }}>
                     <SeverityBadge severity={f.severity} />
                   </td>

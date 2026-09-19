@@ -24,10 +24,21 @@ try {
     Ok "backend + БД доступны"
 } catch { Fail "backend не отвечает на :8000 — запусти scripts\dev.ps1" }
 
+# --- 0.1 Логин (API закрыт авторизацией) ---
+$adminEmail = if ($env:SV_ADMIN_EMAIL) { $env:SV_ADMIN_EMAIL } else { "admin@secretvuln.local" }
+$adminPassword = if ($env:SV_ADMIN_PASSWORD) { $env:SV_ADMIN_PASSWORD } else { "Admin12345!" }
+try {
+    $login = Invoke-RestMethod "$api/auth/login" -Method Post -ContentType "application/json" `
+        -Body (@{ email = $adminEmail; password = $adminPassword } | ConvertTo-Json)
+} catch { Fail "не удалось войти как $adminEmail — создай админа: python -m app.cli create-admin" }
+$headers = @{ Authorization = "Bearer $($login.access_token)" }
+$authArg = "Authorization: Bearer $($login.access_token)"
+Ok "вход выполнен ($adminEmail)"
+
 # --- 1. Тестовый актив ---
 $entityName = "smoke-test-$(Get-Date -Format 'HHmmss')"
 $entity = Invoke-RestMethod "$api/entities" -Method Post -ContentType "application/json" `
-    -Body (@{ name = $entityName } | ConvertTo-Json)
+    -Headers $headers -Body (@{ name = $entityName } | ConvertTo-Json)
 $eid = $entity.id
 Ok "создан актив '$entityName' ($eid)"
 
@@ -37,7 +48,7 @@ $importIds = @()
 foreach ($f in $files) {
     $path = Join-Path $samples $f
     if (-not (Test-Path $path)) { Fail "нет файла $path" }
-    $resp = curl.exe -s -X POST "$api/entities/$eid/imports" -F "file=@$path" | ConvertFrom-Json
+    $resp = curl.exe -s -X POST "$api/entities/$eid/imports" -H $authArg -F "file=@$path" | ConvertFrom-Json
     if (-not $resp.id) { Fail "загрузка $f не удалась: $resp" }
     $importIds += $resp.id
     Ok "загружен $f (import $($resp.id.Substring(0,8)), статус $($resp.status))"
@@ -51,7 +62,7 @@ while ($pending.Count -gt 0 -and (Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
     $still = @()
     foreach ($id in $pending) {
-        $imp = Invoke-RestMethod "$api/imports/$id"
+        $imp = Invoke-RestMethod "$api/imports/$id" -Headers $headers
         if ($imp.status -in @("pending", "processing")) { $still += $id }
     }
     $pending = [System.Collections.ArrayList]$still
@@ -64,7 +75,7 @@ if ($pending.Count -gt 0) {
 # --- 4. Итоги импортов ---
 Write-Host "`n== Импорты ==" -ForegroundColor Cyan
 $rows = foreach ($id in $importIds) {
-    $imp = Invoke-RestMethod "$api/imports/$id"
+    $imp = Invoke-RestMethod "$api/imports/$id" -Headers $headers
     [PSCustomObject]@{
         Файл       = $imp.filename
         Сканер     = $imp.scanner
@@ -79,7 +90,7 @@ $rows | Format-Table -AutoSize | Out-String | Write-Host
 
 # --- 5. Находки по критичности ---
 Write-Host "== Находки в активе (по критичности) ==" -ForegroundColor Cyan
-$stats = Invoke-RestMethod "$api/findings/stats?entity_id=$eid"
+$stats = Invoke-RestMethod "$api/findings/stats?entity_id=$eid" -Headers $headers
 Write-Host "  всего: $($stats.total)"
 foreach ($sev in @("critical", "high", "medium", "low", "info")) {
     $c = $stats.by_severity.$sev
@@ -88,17 +99,33 @@ foreach ($sev in @("critical", "high", "medium", "low", "info")) {
 
 # --- 6. Проверка дедупликации ---
 Write-Host "`n== Дедупликация (повторная загрузка semgrep) ==" -ForegroundColor Cyan
-$dup = curl.exe -s -X POST "$api/entities/$eid/imports" -F "file=@$(Join-Path $samples 'semgrep.sarif')" | ConvertFrom-Json
+$dup = curl.exe -s -X POST "$api/entities/$eid/imports" -H $authArg -F "file=@$(Join-Path $samples 'semgrep.sarif')" | ConvertFrom-Json
 $deadline = (Get-Date).AddSeconds(30)
 do {
     Start-Sleep -Seconds 2
-    $imp = Invoke-RestMethod "$api/imports/$($dup.id)"
+    $imp = Invoke-RestMethod "$api/imports/$($dup.id)" -Headers $headers
 } while ($imp.status -in @("pending", "processing") -and (Get-Date) -lt $deadline)
 
 if ($imp.stats.duplicates -gt 0 -and $imp.stats.created -eq 0) {
     Ok "дедуп работает: created=0, duplicates=$($imp.stats.duplicates)"
 } else {
     Write-Host "⚠ ожидали created=0/duplicates>0, получили: $($imp.stats | ConvertTo-Json -Compress)" -ForegroundColor Yellow
+}
+
+# --- 7. Автозакрытие (повторный скан без одной находки) ---
+Write-Host "`n== Автозакрытие (semgrep-rescan: одна находка исчезла) ==" -ForegroundColor Cyan
+$re = curl.exe -s -X POST "$api/entities/$eid/imports" -H $authArg `
+    -F "file=@$(Join-Path $samples 'semgrep-rescan.sarif')" | ConvertFrom-Json
+$deadline = (Get-Date).AddSeconds(30)
+do {
+    Start-Sleep -Seconds 2
+    $imp = Invoke-RestMethod "$api/imports/$($re.id)" -Headers $headers
+} while ($imp.status -in @("pending", "processing") -and (Get-Date) -lt $deadline)
+
+if ($imp.stats.closed -eq 1) {
+    Ok "автозакрытие работает: closed=1"
+} else {
+    Fail "ожидали closed=1, получили: $($imp.stats | ConvertTo-Json -Compress)"
 }
 
 Write-Host "`nГотово. Открой http://localhost:5173 → раздел «Находки» (актив '$entityName')." -ForegroundColor Green

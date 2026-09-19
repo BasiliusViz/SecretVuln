@@ -61,6 +61,8 @@ docker-compose.yml     # postgres:16, redis:7, minio (+minio-init создаёт
 1. `POST /api/v1/entities/{id}/imports` (multipart, поле `file`) → файл в S3 (`app/services/s3.py`), запись Import(pending), ARQ job `process_import` в Redis
 2. Воркер (`app/worker.py`, запуск: `python -m arq app.worker.WorkerSettings`): скачивает из S3 → парсит SARIF (`app/services/sarif/parser.py`) → определяет сканер по `runs[].tool.driver.name` → нормализует severity (`app/services/sarif/normalizers.py`) → дедуп по fingerprint → пишет findings, обновляет Import.stats/status. Если ре-импорт видит находку в статусе fixed — переоткрывает в new (счётчик updated)
 
+**Процесс (этап 1, спека docs/superpowers/specs/2026-09-19-triage-workflow-and-ai-design.md):** логика импорта — `app/services/import_processing.py` (`apply_import`), воркер только скачивает и вызывает её. Импорт принимает `branch`, `commit_sha`, `pipeline_url`, `scan_scope`, `close_missing` (по умолчанию true), `confirm_empty`; ветка/коммит также берутся из SARIF `versionControlProvenance`. У актива `default_branch` (наследуется вниз, `app/services/entity_tree.py`) — импорт другой ветки отклоняется. **Автозакрытие**: открытые находки объёма `(актив, сканер, scan_scope)`, которых нет в новом отчёте, → `fixed` (пустой отчёт закрывает только с `confirm_empty`). История — `finding_events` (`app/services/events.py`, `GET /findings/{id}/events`). Номера `findings.number` → `SV-N` (`GET /findings/by-number/{n}`). Статус `in_progress`; `PATCH /findings/{id}` принимает JSON `{status, reason}` и только new/triaged/confirmed/in_progress. «Ложное»/«риск» — `decision_requests` (`POST /findings/{id}/decisions`, `POST /decisions/{id}/approve|reject`): разработчик запрашивает, право `finding:approve` одобряет (у кого оно есть — применяется сразу). Риск принимается со сроком; ARQ cron `expire_risks` (03:00) переоткрывает истёкшие. Встроенная роль «Разработчик».
+
 Нормализаторы: Semgrep, Trivy, Gitleaks (всегда high/critical — секреты), Checkov + Default (level→severity: error=high, warning=medium, note=low). Реестр `_REGISTRY` в normalizers.py, матчинг по подстроке имени драйвера.
 
 API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/entities/{id}/imports`, `GET /api/v1/findings` (фильтры: entity_id, severity, status, scanner, limit/offset), `GET /api/v1/findings/stats` (total + by_severity + by_status), `PATCH /api/v1/findings/{id}?status=...`
@@ -115,6 +117,8 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - Миграции: `cd backend && alembic upgrade head`
 - Запуск API: `cd backend && uvicorn app.main:app --reload`
 - Запуск воркера: `cd backend && python -m arq app.worker.WorkerSettings`
+- Тесты: `docker compose up -d postgres`, один раз `docker compose exec postgres createdb -U secretvuln secretvuln_test`, затем `cd backend && .venv\Scripts\python -m pytest` (миграции накатываются автоматически, таблицы чистятся перед каждым тестом)
+- **`minio/minio:latest` больше не тянется с Docker Hub** (pull access denied, 2026-09). Для dev-прогона использовался локальный образ `minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1`; docker-compose.yml пока не обновлён
 
 ## Статус (2026-07-06)
 

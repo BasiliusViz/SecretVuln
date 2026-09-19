@@ -32,6 +32,7 @@
     "new": "Новая",
     "triaged": "В разборе",
     "confirmed": "Подтверждена",
+    "in_progress": "В работе",
     "false_positive": "Ложное срабатывание",
     "risk_accepted": "Риск принят",
     "fixed": "Исправлена"
@@ -44,6 +45,7 @@
   },
   "findings": {
     "title": "Находки",
+    "number": "№",
     "count_one": "{{count}} находка",
     "count_few": "{{count}} находки",
     "count_many": "{{count}} находок",
