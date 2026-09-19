@@ -1,4 +1,5 @@
 from app.models.base import Base
+from app.models.decision_request import DecisionRequest, DecisionStatus, DecisionType, ReasonTag
 from app.models.entity import Entity
 from app.models.finding import Finding, FindingStatus, Severity
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
@@ -18,6 +19,10 @@ __all__ = [
     "FindingEvent",
     "FindingEventType",
     "ActorType",
+    "DecisionRequest",
+    "DecisionStatus",
+    "DecisionType",
+    "ReasonTag",
     "Import",
     "ImportStatus",
     "Role",
