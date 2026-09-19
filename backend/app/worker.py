@@ -6,13 +6,14 @@ import logging
 import traceback
 from datetime import datetime, timezone
 
-from arq import create_pool
+from arq import create_pool, cron
 from arq.connections import ArqRedis, RedisSettings
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 from app.models.import_ import Import, ImportStatus
 from app.services.import_processing import ImportRejected, apply_import
+from app.services.risk_expiry import expire_risk_acceptances
 from app.services.s3 import download_sarif
 from app.services.sarif import parse_sarif
 
@@ -59,6 +60,13 @@ async def process_import(ctx: dict, import_id: str) -> None:
             logger.exception("Import %s failed", import_id)
 
 
+async def expire_risks(ctx: dict) -> None:
+    session_factory: async_sessionmaker = ctx["session_factory"]
+    async with session_factory() as db:
+        reopened = await expire_risk_acceptances(db)
+    logger.info("Risk expiry: %d findings reopened", reopened)
+
+
 async def startup(ctx: dict) -> None:
     settings = get_settings()
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
@@ -73,6 +81,7 @@ async def shutdown(ctx: dict) -> None:
 
 class WorkerSettings:
     functions = [process_import]
+    cron_jobs = [cron(expire_risks, hour={3}, minute={0})]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
