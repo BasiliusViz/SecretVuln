@@ -1,4 +1,4 @@
-"""Применение распарсенного SARIF к базе: создание, дедупликация, переоткрытие."""
+"""Применение распарсенного SARIF к базе: создание, дедупликация, переоткрытие, автозакрытие."""
 
 from __future__ import annotations
 
@@ -16,6 +16,14 @@ from app.services.entity_tree import branch_allowed, branch_rejection_message, r
 from app.services.events import record_event
 from app.services.sarif import SarifRun, get_normalizer
 
+# Статусы, которые автозакрытие переводит в fixed. Решения людей (ложное/риск) не трогаем.
+OPEN_STATUSES: tuple[FindingStatus, ...] = (
+    FindingStatus.new,
+    FindingStatus.triaged,
+    FindingStatus.confirmed,
+    FindingStatus.in_progress,
+)
+
 
 class ImportRejected(Exception):
     """Импорт не должен попадать в бэклог (например, не основная ветка)."""
@@ -25,6 +33,43 @@ def _apply_provenance(imp: Import, runs: list[SarifRun]) -> None:
     for run in runs:
         imp.branch = imp.branch or run.branch
         imp.commit_sha = imp.commit_sha or run.revision
+
+
+async def _close_missing(
+    db: AsyncSession, imp: Import, seen: dict[str, set[str]]
+) -> tuple[int, list[str]]:
+    """Закрывает открытые находки объёма (актив, сканер, scan_scope), которых нет в отчёте."""
+    closed = 0
+    warnings: list[str] = []
+    for scanner, fingerprints in seen.items():
+        q = select(Finding).where(
+            Finding.entity_id == imp.entity_id,
+            Finding.scanner == scanner,
+            Finding.scan_scope.is_not_distinct_from(imp.scan_scope),
+            Finding.status.in_(OPEN_STATUSES),
+        )
+        if fingerprints:
+            q = q.where(Finding.fingerprint.not_in(fingerprints))
+        missing = list(await db.scalars(q))
+        if not missing:
+            continue
+        if not fingerprints and not imp.confirm_empty:
+            warnings.append(
+                f"{scanner}: отчёт пустой — автозакрытие {len(missing)} находок пропущено "
+                "(передайте confirm_empty=true, если уязвимостей действительно нет)"
+            )
+            continue
+        for finding in missing:
+            previous = finding.status
+            finding.status = FindingStatus.fixed
+            record_event(
+                db, finding.id, FindingEventType.auto_fixed,
+                from_status=previous, to_status=FindingStatus.fixed,
+                reason="Не обнаружена при повторном скане",
+                payload={"import_id": str(imp.id)},
+            )
+            closed += 1
+    return closed, warnings
 
 
 async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> dict[str, Any]:
@@ -37,13 +82,17 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
     created = updated = duplicates = total_results = 0
     scanner_name: str | None = None
     now = datetime.now(timezone.utc)
+    seen: dict[str, set[str]] = {}
 
     for run in runs:
         scanner_name = run.scanner
+        # пустой отчёт сканера тоже участвует в автозакрытии
+        scanner_seen = seen.setdefault(run.scanner, set())
         normalizer = get_normalizer(run.scanner)
 
         for result in run.results:
             total_results += 1
+            scanner_seen.add(result.fingerprint)
             existing = await db.scalar(
                 select(Finding).where(
                     Finding.entity_id == imp.entity_id,
@@ -99,10 +148,19 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
 
         await db.flush()
 
+    closed, warnings = 0, []
+    if imp.close_missing:
+        closed, warnings = await _close_missing(db, imp, seen)
+        await db.flush()
+
     imp.scanner = scanner_name
-    return {
+    stats: dict[str, Any] = {
         "created": created,
         "updated": updated,
         "duplicates": duplicates,
         "total_results": total_results,
+        "closed": closed,
     }
+    if warnings:
+        stats["warnings"] = warnings
+    return stats
