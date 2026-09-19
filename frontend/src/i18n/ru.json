@@ -154,7 +154,8 @@
       "write": "Запись",
       "delete": "Удаление",
       "import": "Импорт",
-      "triage": "Разбор"
+      "triage": "Разбор",
+      "approve": "Одобрение"
     }
   },
   "dashboard": {

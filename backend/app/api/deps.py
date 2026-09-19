@@ -51,14 +51,18 @@ async def get_current_user(principal: Principal = Depends(get_current_principal)
     return principal.user
 
 
-def require_permission(resource: str, action: str):
-    """Зависимость: пропускает суперюзера или роль с правом (resource, action)."""
+def has_permission(principal: Principal, resource: str, action: str) -> bool:
+    """Суперюзер может всё; иначе — хотя бы одна роль с правом (resource, action)."""
     from app.authz.enforcer import check
 
+    return principal.user.is_superuser or check(principal.roles, resource, action)
+
+
+def require_permission(resource: str, action: str):
+    """Зависимость: пропускает суперюзера или роль с правом (resource, action)."""
+
     async def _dep(principal: Principal = Depends(get_current_principal)) -> Principal:
-        if principal.user.is_superuser:
-            return principal
-        if check(principal.roles, resource, action):
+        if has_permission(principal, resource, action):
             return principal
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, f"Недостаточно прав: {resource}:{action}"

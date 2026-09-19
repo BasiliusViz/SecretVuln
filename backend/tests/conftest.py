@@ -149,3 +149,13 @@ def builtin_policies() -> None:
 @pytest.fixture
 async def admin(make_user):
     return await make_user("admin@test.local", superuser=True)
+
+
+@pytest.fixture
+async def appsec(make_user, builtin_policies):
+    return await make_user("alice@test.local", roles=("Инженер ИБ",))
+
+
+@pytest.fixture
+async def developer(make_user, builtin_policies):
+    return await make_user("bob@test.local", roles=("Разработчик",))

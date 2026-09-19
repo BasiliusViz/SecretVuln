@@ -9,14 +9,14 @@ from __future__ import annotations
 # ресурс → допустимые действия
 CATALOG: dict[str, list[str]] = {
     "entity": ["read", "write", "delete"],
-    "finding": ["read", "write", "delete", "triage"],
+    "finding": ["read", "write", "delete", "triage", "approve"],
     "import": ["read", "import", "delete"],
     "group": ["read", "write", "delete"],
     "role": ["read", "write", "delete"],
 }
 
 RESOURCES: list[str] = list(CATALOG.keys())
-ACTIONS: list[str] = ["read", "write", "delete", "import", "triage"]
+ACTIONS: list[str] = ["read", "write", "delete", "import", "triage", "approve"]
 
 
 def is_valid(resource: str, action: str) -> bool:

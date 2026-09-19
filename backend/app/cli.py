@@ -61,15 +61,20 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
         "Только чтение во всех разделах",
         [(r, "read") for r in _R],
     ),
+    "Разработчик": (
+        "Видит находки, берёт в работу, запрашивает «ложное срабатывание» и принятие риска",
+        [("entity", "read"), ("finding", "read"), ("finding", "triage"), ("import", "read")],
+    ),
     "Аудитор": (
         "Чтение везде + разбор находок",
         [(r, "read") for r in _R] + [("finding", "triage")],
     ),
     "Инженер ИБ": (
-        "Полный доступ к активам, находкам и импортам",
+        "Полный доступ к активам, находкам и импортам, одобряет решения по находкам",
         [
             ("entity", "read"), ("entity", "write"), ("entity", "delete"),
-            ("finding", "read"), ("finding", "write"), ("finding", "delete"), ("finding", "triage"),
+            ("finding", "read"), ("finding", "write"), ("finding", "delete"),
+            ("finding", "triage"), ("finding", "approve"),
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"),
         ],
@@ -78,7 +83,8 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
         "Все права, включая управление группами и ролями",
         [
             ("entity", "read"), ("entity", "write"), ("entity", "delete"),
-            ("finding", "read"), ("finding", "write"), ("finding", "delete"), ("finding", "triage"),
+            ("finding", "read"), ("finding", "write"), ("finding", "delete"),
+            ("finding", "triage"), ("finding", "approve"),
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"), ("group", "write"), ("group", "delete"),
             ("role", "read"), ("role", "write"), ("role", "delete"),
