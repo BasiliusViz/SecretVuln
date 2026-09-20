@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(git status:*)",
+      "PowerShell(git log:*)",
+      "PowerShell(git diff:*)",
+      "PowerShell(git branch:*)",
+      "PowerShell(docker compose up -d:*)",
+      "PowerShell(docker compose ps:*)",
+      "PowerShell(docker ps:*)",
+      "PowerShell(npm run build:*)"
+    ],
+    "ask": [
+      "PowerShell(docker compose down:*)",
+      "PowerShell(docker volume rm:*)",
+      "PowerShell(docker rm:*)",
+      "PowerShell(git push:*)",
+      "PowerShell(git reset:*)",
+      "PowerShell(Remove-Item:*)",
+      "Bash(docker compose down:*)",
+      "Bash(docker volume rm:*)",
+      "Bash(rm:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)"
+    ]
+  }
+}

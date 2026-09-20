@@ -108,17 +108,60 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 
 Конфигурация виджета хранится как JSON (планируется таблица `dashboard_widgets`): `{chart_type, group_by, period, filters}`. Backend отдаёт агрегаты через generic endpoint (`GROUP BY` по любому полю Finding), Recharts рендерит по chart_type. Ничего не хардкодить под конкретные графики.
 
+## Карта файлов
+
+Чтобы не искать: где что лежит. Подробные инструкции по запуску, миграциям и
+известным граблям — в скилле `secretvuln-dev` (вызывать `/secretvuln-dev`),
+команды `/sv-test`, `/sv-stack`, `/sv-smoke`.
+
+**Backend (`backend/app/`)**
+
+| Файл | За что отвечает |
+|---|---|
+| `main.py` | Сборка FastAPI, подключение роутеров, `/api/v1/health` |
+| `core/config.py` | Настройки (`SV_*`), `database_url_sync` для Alembic и Casbin |
+| `core/security.py` | bcrypt-пароли, JWT (создание и разбор) |
+| `db/session.py` | Async engine, зависимость `get_db` |
+| `api/deps.py` | `Principal`, `get_current_principal`, `has_permission`, `require_permission` |
+| `api/entities.py` | CRUD дерева проектов, защита от циклов |
+| `api/imports.py` | Загрузка SARIF: метаданные CI, проверка ветки |
+| `api/findings.py` | Список, статистика, история, поиск по номеру, смена статуса |
+| `api/decisions.py` | Запросы «ложное / риск принят», одобрение и отклонение |
+| `api/auth.py`, `api/groups.py`, `api/roles.py` | Вход и LDAP, группы, роли и каталог прав |
+| `authz/enforcer.py`, `authz/permissions.py`, `authz/rbac_model.conf` | Casbin: enforcer, каталог прав, модель |
+| `models/` | SQLAlchemy: `entity`, `finding`, `finding_event`, `decision_request`, `import_`, `user`, `user_group`, `role` |
+| `schemas/` | Pydantic по тем же сущностям |
+| `services/import_processing.py` | `apply_import`: создание, дедуп, переоткрытие, автозакрытие |
+| `services/entity_tree.py` | Наследование настроек вниз по дереву (`resolve_default_branch`) |
+| `services/events.py` | `record_event` — запись истории |
+| `services/decisions.py` | Создание, одобрение, отклонение запросов |
+| `services/risk_expiry.py` | Истечение принятого риска |
+| `services/sarif/` | `parser.py` (разбор + `versionControlProvenance`), `normalizers.py` (severity по сканерам) |
+| `services/s3.py` | MinIO/S3 |
+| `worker.py` | ARQ: `process_import`, cron `expire_risks` |
+| `cli.py` | `create-admin`, `seed-roles` (там же список встроенных ролей) |
+| `tests/conftest.py`, `tests/factories.py` | Тестовая БД, фикстуры пользователей и клиента, фабрики данных |
+
+**Frontend (`frontend/src/`)**
+
+| Файл | За что отвечает |
+|---|---|
+| `App.tsx` | Маршруты, гард авторизации, `ThemeProvider` |
+| `components/Layout.tsx` | Сайдбар, переключатель тем, пользователь |
+| `theme/global.css` | Пять тем (`data-theme`), базовые стили |
+| `theme/themes.ts`, `theme/ThemeContext.tsx` | Список тем и их состояние |
+| `theme/severity.ts` | Цвета критичности из переменных темы (`useSeverityColors`) |
+| `i18n/ru.json` | **Все строки интерфейса** |
+| `pages/` | `Dashboard`, `Assets` (раздел «Проекты»), `Findings` (раздел «Уязвимости»), `Imports`, `Groups`, `Roles`, `Login` |
+| `api/client.ts` | `apiFetch`: Bearer-токен, редирект на логин при 401 |
+
 ## Конвенции
 
 - Все env-переменные с префиксом `SV_` (см. backend/.env.example)
 - API под `/api/v1`, Swagger — `/api/docs`
 - Модели: UUID PK (`UUIDPKMixin`), created_at/updated_at (`TimestampMixin`), enum'ы — Python `str, enum.Enum` + PG native enum
 - Alembic использует sync-драйвер psycopg (URL выводится из async URL в `config.database_url_sync`); новые модели импортировать в `app/models/__init__.py`, иначе autogenerate их не увидит
-- Миграции: `cd backend && alembic upgrade head`
-- Запуск API: `cd backend && uvicorn app.main:app --reload`
-- Запуск воркера: `cd backend && python -m arq app.worker.WorkerSettings`
-- Тесты: `docker compose up -d postgres`, один раз `docker compose exec postgres createdb -U secretvuln secretvuln_test`, затем `cd backend && .venv\Scripts\python -m pytest` (миграции накатываются автоматически, таблицы чистятся перед каждым тестом)
-- **`minio/minio:latest` больше не тянется с Docker Hub** (pull access denied, 2026-09). Для dev-прогона использовался локальный образ `minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1`; docker-compose.yml пока не обновлён
+- Миграции: `cd backend && alembic upgrade head`; тесты: `/sv-test`; стенд: `/sv-stack`
 
 ## Статус (2026-07-06)
 
