@@ -147,7 +147,7 @@ export function Findings() {
                   >
                     {f.file_path
                       ? `${f.file_path}${f.line_start ? `:${f.line_start}` : ""}`
-                      : "вЂ”"}
+                      : "—"}
                   </td>
                   <td style={{ padding: "8px 12px", fontSize: 12 }}>
                     {t(`status.${f.status}`)}

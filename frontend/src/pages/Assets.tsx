@@ -130,7 +130,7 @@ function TreeNode({
         }}
       >
         <span aria-hidden="true" style={{ color: "var(--text-muted)", fontSize: 12 }}>
-          {children.length > 0 ? "в–ё" : "В·"}
+          {children.length > 0 ? "▸" : "·"}
         </span>
         <span style={{ fontWeight: 500 }}>{node.name}</span>
         {node.description && (
@@ -157,7 +157,7 @@ function TreeNode({
             onClick={() => onDelete(node)}
             aria-label={t("projects.delete")}
           >
-            вњ•
+            ✕
           </button>
         </span>
       </div>
