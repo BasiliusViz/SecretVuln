@@ -1,5 +1,6 @@
 """Настройки проекта: значения, источники, наследование, закрепление, правила владения."""
 
+import app.api.entity_settings as entity_settings_api
 from tests.factories import make_entity, make_group
 
 
@@ -59,6 +60,26 @@ async def test_repo_bound_to_one_project(client, admin, db):
     )
     assert r.status_code == 409
     assert "a" in r.json()["detail"]
+    assert a.id  # a остаётся владельцем репозитория
+
+
+async def test_repo_conflict_at_commit_returns_409(client, admin, db, monkeypatch):
+    """TOCTOU: pre-check bypassed (concurrent write), DB unique index still catches it -> 409, not 500."""
+    _, h = admin
+    a = await make_entity(db, "a", repo_url="https://gitlab.corp/team/app")
+    b = await make_entity(db, "b")
+
+    async def _no_owner_found(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(entity_settings_api, "find_repo_owner", _no_owner_found)
+
+    r = await client.patch(
+        f"/api/v1/entities/{b.id}/settings",
+        json={"repo_url": "https://gitlab.corp/team/app.git"},
+        headers=h,
+    )
+    assert r.status_code == 409
     assert a.id  # a остаётся владельцем репозитория
 
 

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_permission
@@ -120,7 +121,11 @@ async def update_settings(
     for key, value in fields.items():
         setattr(entity, key, value)
     _pin(entity, *(FIELD_PIN[key] for key in fields))
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Репозиторий уже привязан к другому проекту")
     return await settings_read(db, entity)
 
 
