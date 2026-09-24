@@ -11,7 +11,7 @@ from app.models.base import Base, TimestampMixin, UUIDPKMixin
 
 
 class ImportStatus(str, enum.Enum):
-    pending = "pending"        # file stored in S3, ARQ job enqueued
+    pending = "pending"        # file stored, ARQ job enqueued
     processing = "processing"  # worker picked it up
     done = "done"
     failed = "failed"
@@ -30,7 +30,7 @@ class Import(Base, UUIDPKMixin, TimestampMixin):
     )
 
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
-    s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     # Detected by the worker from SARIF tool.driver.name (semgrep, trivy, gitleaks, checkov, ...)
     scanner: Mapped[str | None] = mapped_column(String(100))
     # Метаданные CI (все необязательные; ветка/коммит могут прийти из SARIF versionControlProvenance)

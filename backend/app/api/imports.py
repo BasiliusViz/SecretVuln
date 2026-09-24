@@ -10,7 +10,7 @@ from app.models import Entity, Import
 from app.models.import_ import ImportStatus
 from app.schemas.import_ import ImportRead
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
-from app.services.s3 import upload_sarif
+from app.services.storage import save_sarif
 
 router = APIRouter(prefix="/api/v1", tags=["imports"])
 
@@ -51,13 +51,13 @@ async def create_import(
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large (max 50 MB)")
 
     filename = file.filename or "upload.sarif"
-    s3_key = upload_sarif(content, filename)
+    storage_key = save_sarif(content, filename)
 
     import_record = Import(
         entity_id=entity_id,
         uploaded_by_id=principal.user.id,
         filename=filename,
-        s3_key=s3_key,
+        storage_key=storage_key,
         status=ImportStatus.pending,
         branch=branch,
         commit_sha=commit_sha or None,

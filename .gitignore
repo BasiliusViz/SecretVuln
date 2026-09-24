@@ -10,6 +10,7 @@ venv/
 # Env / secrets
 .env
 *.local
+backend/data/
 
 # Node
 node_modules/

@@ -102,7 +102,7 @@ async def client(monkeypatch):
 
     app.dependency_overrides[get_db] = _get_db
     monkeypatch.setattr(
-        "app.api.imports.upload_sarif", lambda content, filename: f"test/{filename}"
+        "app.api.imports.save_sarif", lambda content, filename: f"test/{filename}"
     )
     enqueued: list[str] = []
 

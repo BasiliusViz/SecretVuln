@@ -56,7 +56,7 @@ async def make_import(db: AsyncSession, entity: Entity, **kw: Any) -> Import:
     imp = Import(
         entity_id=entity.id,
         filename=kw.pop("filename", "t.sarif"),
-        s3_key=kw.pop("s3_key", "test/t.sarif"),
+        storage_key=kw.pop("storage_key", "test/t.sarif"),
         status=kw.pop("status", ImportStatus.processing),
         **kw,
     )

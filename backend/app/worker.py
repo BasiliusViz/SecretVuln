@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.models.import_ import Import, ImportStatus
 from app.services.import_processing import ImportRejected, apply_import
 from app.services.risk_expiry import expire_risk_acceptances
-from app.services.s3 import download_sarif
+from app.services.storage import load_sarif
 from app.services.sarif import parse_sarif
 
 logger = logging.getLogger("arq.worker")
@@ -43,7 +43,7 @@ async def process_import(ctx: dict, import_id: str) -> None:
         await db.commit()
 
         try:
-            runs = parse_sarif(download_sarif(imp.s3_key))
+            runs = parse_sarif(load_sarif(imp.storage_key))
             stats = await apply_import(db, imp, runs)
             imp.status = ImportStatus.done
             imp.stats = stats

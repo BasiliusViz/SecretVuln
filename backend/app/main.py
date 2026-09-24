@@ -13,6 +13,7 @@ from app.api.imports import router as imports_router
 from app.api.roles import router as roles_router
 from app.core.config import get_settings
 from app.db.session import engine, get_db
+from app.services.storage import check_storage
 
 settings = get_settings()
 
@@ -49,7 +50,10 @@ async def health(db: AsyncSession = Depends(get_db)) -> dict:
         await db.execute(text("SELECT 1"))
     except Exception:
         db_ok = False
+    storage_ok = check_storage()
     return {
-        "status": "ok" if db_ok else "degraded",
+        "status": "ok" if db_ok and storage_ok else "degraded",
         "database": "up" if db_ok else "down",
+        "storage": "up" if storage_ok else "down",
+        "storage_backend": settings.storage_backend,
     }

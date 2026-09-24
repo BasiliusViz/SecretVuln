@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # Redis / ARQ
     redis_url: str = "redis://localhost:6379/0"
 
+    # Хранилище загруженных SARIF: local (папка на диске) или s3 (MinIO/S3, настройки ниже)
+    storage_backend: str = "local"
+    storage_path: str = "./data/sarif"
+
     # S3 / MinIO
     s3_endpoint_url: str = "http://localhost:9002"
     s3_access_key: str = "minioadmin"
