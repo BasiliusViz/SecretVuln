@@ -1,11 +1,20 @@
+import enum
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
+
+
+class RepoType(str, enum.Enum):
+    gitlab = "gitlab"
+    github = "github"
+    gitea = "gitea"
+    bitbucket = "bitbucket"
 
 
 class Entity(Base, UUIDPKMixin, TimestampMixin):
@@ -30,6 +39,10 @@ class Entity(Base, UUIDPKMixin, TimestampMixin):
             "ix_entities_path_cache", "path_cache", unique=True,
             postgresql_ops={"path_cache": "text_pattern_ops"},
         ),
+        Index(
+            "uq_entities_repo_url", "repo_url", unique=True,
+            postgresql_where=text("repo_url IS NOT NULL"),
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
@@ -45,6 +58,20 @@ class Entity(Base, UUIDPKMixin, TimestampMixin):
     default_branch: Mapped[str | None] = mapped_column(String(255))
     # Arbitrary user-defined fields (team, criticality, repo URL, ...)
     custom_fields: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+
+    # Наследуемые настройки (NULL — берётся у ближайшего предка), см. services/entity_settings.py
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user_groups.id", ondelete="SET NULL")
+    )
+    repo_url: Mapped[str | None] = mapped_column(String(1024))
+    repo_type: Mapped[RepoType | None] = mapped_column(Enum(RepoType, name="repo_type"))
+    repo_path_prefix: Mapped[str | None] = mapped_column(String(512))
+    # Поля, изменённые в админке: файл .secretvuln.yml их больше не перезаписывает
+    pinned_fields: Mapped[list[str]] = mapped_column(ARRAY(String(50)), default=list, nullable=False)
+    # Последний применённый .secretvuln.yml (нормализованный)
+    config_file: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    config_commit_sha: Mapped[str | None] = mapped_column(String(64))
+    config_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     findings = relationship("Finding", back_populates="entity", cascade="all, delete-orphan")
     imports = relationship("Import", back_populates="entity", cascade="all, delete-orphan")

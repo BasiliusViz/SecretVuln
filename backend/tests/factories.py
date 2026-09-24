@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Entity, Finding, Import
+from app.models import Entity, Finding, GroupSource, Import, UserGroup
 from app.models.finding import Severity
 from app.models.import_ import ImportStatus
 from app.services.entity_paths import slugify
@@ -88,3 +88,11 @@ async def make_finding(
     await db.commit()
     await db.refresh(finding)
     return finding
+
+
+async def make_group(db: AsyncSession, name: str = "team") -> UserGroup:
+    group = UserGroup(name=name, source=GroupSource.manual)
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+    return group

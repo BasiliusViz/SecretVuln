@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -98,6 +99,20 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
     # Коммит последнего импорта, в котором находку видели (для ссылки на строку кода)
     commit_sha: Mapped[str | None] = mapped_column(String(64))
 
+    # Владелец: команда (по правилам/владельцу проекта или вручную) и, необязательно, человек
+    assignee_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user_groups.id", ondelete="SET NULL"), index=True
+    )
+    assignee_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    # Назначено вручную — повторные импорты не переназначают по правилам
+    assigned_manually: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # «Нужна помощь AppSec»: момент запроса, снимается ответом AppSec
+    help_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Рекомендация сканера (SARIF rule.help)
+    help_text: Mapped[str | None] = mapped_column(Text)
+
     # Dedup key (from SARIF partialFingerprints or computed fallback)
     fingerprint: Mapped[str] = mapped_column(String(512), nullable=False)
 
@@ -113,3 +128,5 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
 
     entity = relationship("Entity", back_populates="findings")
     import_ = relationship("Import", back_populates="findings")
+    assignee_group = relationship("UserGroup", lazy="selectin")
+    assignee_user = relationship("User", lazy="selectin")

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import router as auth_router
 from app.api.decisions import router as decisions_router
 from app.api.entities import router as entities_router
+from app.api.entity_settings import router as entity_settings_router
 from app.api.findings import router as findings_router
 from app.api.groups import router as groups_router
 from app.api.imports import router as imports_router
@@ -36,6 +37,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(entities_router)
+app.include_router(entity_settings_router)
 app.include_router(imports_router)
 app.include_router(findings_router)
 app.include_router(decisions_router)

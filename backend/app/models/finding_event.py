@@ -18,6 +18,10 @@ class FindingEventType(str, enum.Enum):
     auto_fixed = "auto_fixed"
     request_created = "request_created"
     request_decided = "request_decided"
+    assigned = "assigned"
+    comment = "comment"
+    help_requested = "help_requested"
+    help_resolved = "help_resolved"
 
 
 class ActorType(str, enum.Enum):

@@ -37,11 +37,15 @@ class Import(Base, UUIDPKMixin, TimestampMixin):
     branch: Mapped[str | None] = mapped_column(String(255))
     commit_sha: Mapped[str | None] = mapped_column(String(64))
     pipeline_url: Mapped[str | None] = mapped_column(String(1024))
+    # Репозиторий из SARIF versionControlProvenance (для ссылок на код)
+    repo_url: Mapped[str | None] = mapped_column(String(1024))
     scan_scope: Mapped[str | None] = mapped_column(String(255))
     # Закрывать находки объёма, которых нет в отчёте
     close_missing: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Разрешить автозакрытие по пустому отчёту (защита от сломанного сканера)
     confirm_empty: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Предупреждения применения .secretvuln.yml (неизвестная группа и т. п.)
+    config_warnings: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     status: Mapped[ImportStatus] = mapped_column(
         Enum(ImportStatus, name="import_status"),
         default=ImportStatus.pending,
