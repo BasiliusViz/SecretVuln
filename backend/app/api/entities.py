@@ -115,6 +115,9 @@ async def upsert_entity_by_path(
         entity, _created = await ensure_path(db, path, create=True)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, CONFLICT)
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(entity, key, value)
     try:

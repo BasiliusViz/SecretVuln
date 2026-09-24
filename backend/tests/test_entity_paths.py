@@ -32,10 +32,10 @@ async def _create(client, headers, name, parent_id=None, **extra):
 async def test_create_sets_slug_and_path(client, admin):
     _, h = admin
     root = await _create(client, h, "Финтех")
-    assert root["slug"] == "fintech"
-    assert root["path"] == "fintech"
+    assert root["slug"] == "fintekh"
+    assert root["path"] == "fintekh"
     child = await _create(client, h, "Payments", root["id"])
-    assert child["path"] == "fintech/payments"
+    assert child["path"] == "fintekh/payments"
 
 
 async def test_rename_slug_and_move_recompute_subtree(client, admin):
@@ -110,6 +110,16 @@ async def test_get_by_path(client, admin):
     assert r.status_code == 404
     r = await client.get("/api/v1/entities/by-path/Bad Path", headers=h)
     assert r.status_code == 422
+
+
+async def test_put_by_path_conflict_returns_409(client, admin):
+    """Автосоздаваемый узел цепочки называется как сегмент пути (slug); если сосед с таким
+    именем уже есть под другим slug, вставка ловит IntegrityError по uq_entities_parent_name —
+    должно вернуть 409, а не 500."""
+    _, h = admin
+    await _create(client, h, "a", slug="a-taken")
+    r = await client.put("/api/v1/entities/by-path/a/b", json={}, headers=h)
+    assert r.status_code == 409
 
 
 async def test_put_by_path_requires_entity_write(client, developer):
