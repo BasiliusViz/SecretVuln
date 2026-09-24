@@ -6,19 +6,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, has_permission, require_permission
 from app.db.session import get_db
-from app.models import Finding
+from app.models import Entity, Finding
 from app.models.finding import FindingStatus, Severity
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
 from app.schemas.finding import FindingRead, FindingStatusUpdate
 from app.schemas.finding_event import FindingEventRead
+from app.services.entity_paths import subtree_ids
 from app.services.events import record_event
 
 router = APIRouter(prefix="/api/v1", tags=["findings"])
 
 
+async def _entity_filter(db: AsyncSession, entity_id: uuid.UUID, include_descendants: bool):
+    """Условие на Finding.entity_id: сам проект или всё его поддерево."""
+    if not include_descendants:
+        return Finding.entity_id == entity_id
+    entity = await db.get(Entity, entity_id)
+    if entity is None:
+        return Finding.entity_id == entity_id  # пустой результат
+    return Finding.entity_id.in_(subtree_ids(entity))
+
+
 @router.get("/findings", response_model=list[FindingRead])
 async def list_findings(
     entity_id: uuid.UUID | None = None,
+    include_descendants: bool = False,
     severity: Severity | None = None,
     finding_status: FindingStatus | None = Query(None, alias="status"),
     scanner: str | None = None,
@@ -29,7 +41,7 @@ async def list_findings(
 ) -> list[Finding]:
     q = select(Finding)
     if entity_id:
-        q = q.where(Finding.entity_id == entity_id)
+        q = q.where(await _entity_filter(db, entity_id, include_descendants))
     if severity:
         q = q.where(Finding.severity == severity)
     if finding_status:
@@ -44,21 +56,18 @@ async def list_findings(
 @router.get("/findings/stats")
 async def findings_stats(
     entity_id: uuid.UUID | None = None,
+    include_descendants: bool = False,
     _: object = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    scope = await _entity_filter(db, entity_id, include_descendants) if entity_id else None
     q = select(Finding.severity, func.count()).group_by(Finding.severity)
-    if entity_id:
-        q = q.where(Finding.entity_id == entity_id)
-    rows = (await db.execute(q)).all()
-    by_severity = {sev.value: cnt for sev, cnt in rows}
-
     q2 = select(Finding.status, func.count()).group_by(Finding.status)
-    if entity_id:
-        q2 = q2.where(Finding.entity_id == entity_id)
-    rows2 = (await db.execute(q2)).all()
-    by_status = {st.value: cnt for st, cnt in rows2}
-
+    if scope is not None:
+        q = q.where(scope)
+        q2 = q2.where(scope)
+    by_severity = {sev.value: cnt for sev, cnt in (await db.execute(q)).all()}
+    by_status = {st.value: cnt for st, cnt in (await db.execute(q2)).all()}
     total = sum(by_severity.values())
     return {"total": total, "by_severity": by_severity, "by_status": by_status}
 

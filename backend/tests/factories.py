@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Entity, Finding, Import
 from app.models.finding import Severity
 from app.models.import_ import ImportStatus
+from app.services.entity_paths import slugify
 
 
 def make_sarif(
@@ -45,7 +46,12 @@ def make_sarif(
 async def make_entity(
     db: AsyncSession, name: str = "svc", parent_id=None, **kw: Any
 ) -> Entity:
-    entity = Entity(name=name, parent_id=parent_id, **kw)
+    slug = kw.pop("slug", slugify(name))
+    path = slug
+    if parent_id is not None:
+        parent = await db.get(Entity, parent_id)
+        path = f"{parent.path_cache}/{slug}"
+    entity = Entity(name=name, parent_id=parent_id, slug=slug, path_cache=path, **kw)
     db.add(entity)
     await db.commit()
     await db.refresh(entity)

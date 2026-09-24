@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,9 +23,20 @@ class Entity(Base, UUIDPKMixin, TimestampMixin):
         UniqueConstraint(
             "parent_id", "name", name="uq_entities_parent_name", postgresql_nulls_not_distinct=True
         ),
+        UniqueConstraint(
+            "parent_id", "slug", name="uq_entities_parent_slug", postgresql_nulls_not_distinct=True
+        ),
+        Index(
+            "ix_entities_path_cache", "path_cache", unique=True,
+            postgresql_ops={"path_cache": "text_pattern_ops"},
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    # Адресная часть узла: [a-z0-9._-], уникальна среди соседей
+    slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Полный путь fintech/payments/api — пересчитывается при смене slug/родителя (entity_paths)
+    path_cache: Mapped[str] = mapped_column(String(2048), nullable=False)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("entities.id", ondelete="CASCADE"), index=True
     )
