@@ -5,6 +5,7 @@ import { Layout } from "./components/Layout";
 import { ThemeProvider } from "./theme/ThemeContext";
 import { Assets } from "./pages/Assets";
 import { Dashboard } from "./pages/Dashboard";
+import { FindingWindow } from "./pages/FindingWindow";
 import { Findings } from "./pages/Findings";
 import { Groups } from "./pages/Groups";
 import { Imports } from "./pages/Imports";
@@ -44,6 +45,7 @@ export function App() {
               <Route index element={<Dashboard />} />
               <Route path="projects" element={<Assets />} />
               <Route path="vulnerabilities" element={<Findings />} />
+              <Route path="f/:ref" element={<FindingWindow />} />
               <Route path="imports" element={<Imports />} />
               <Route path="groups" element={<Groups />} />
               <Route path="roles" element={<Roles />} />
