@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Sequence
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +20,9 @@ from app.schemas.entity_settings import (
     InheritedRule,
     RuleIn,
     RuleRead,
+    UnpinRequest,
 )
+from app.services.config_file import apply_stored_config, export_config
 from app.services.entity_settings import (
     FIELD_PIN,
     effective_settings,
@@ -151,3 +154,32 @@ async def replace_rules(
     _pin(entity, "ownership_rules")
     await db.commit()
     return await settings_read(db, entity)
+
+
+@router.post("/{entity_id}/settings/unpin", response_model=EntitySettingsRead)
+async def unpin_setting(
+    entity_id: uuid.UUID,
+    data: UnpinRequest,
+    _: object = Depends(require_permission("entity", "write")),
+    db: AsyncSession = Depends(get_db),
+) -> EntitySettingsRead:
+    """«Вернуть к файлу»: снять закрепление и сразу подставить значение из файла."""
+    entity = await _entity_or_404(db, entity_id)
+    entity.pinned_fields = [f for f in entity.pinned_fields if f != data.field]
+    warnings = await apply_stored_config(db, entity, only={data.field})
+    await db.commit()
+    return await settings_read(db, entity, warnings)
+
+
+@router.get("/{entity_id}/config.yml", response_class=PlainTextResponse)
+async def download_config(
+    entity_id: uuid.UUID,
+    _: object = Depends(require_permission("entity", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> PlainTextResponse:
+    entity = await _entity_or_404(db, entity_id)
+    return PlainTextResponse(
+        await export_config(db, entity),
+        media_type="application/yaml; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename=".secretvuln.yml"'},
+    )

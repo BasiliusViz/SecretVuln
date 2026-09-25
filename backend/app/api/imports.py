@@ -1,14 +1,17 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Principal, require_permission
+from app.api.deps import Principal, has_permission, require_permission
 from app.db.session import get_db
 from app.models import Entity, Import
 from app.models.import_ import ImportStatus
-from app.schemas.import_ import ImportRead
+from app.schemas.import_ import CreatedEntity, ImportCreated, ImportRead
+from app.services.config_file import ConfigError, ProjectConfig, apply_config, parse_config
+from app.services.entity_paths import ensure_path
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
 from app.services.storage import save_sarif
 
@@ -17,29 +20,41 @@ router = APIRouter(prefix="/api/v1", tags=["imports"])
 MAX_SARIF_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
-@router.post(
-    "/entities/{entity_id}/imports",
-    response_model=ImportRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_import(
-    entity_id: uuid.UUID,
+async def _read_config(config: UploadFile | None) -> ProjectConfig | None:
+    if config is None:
+        return None
+    try:
+        return parse_config(await config.read())
+    except ConfigError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+
+
+async def _create_import(
+    db: AsyncSession,
+    principal: Principal,
+    entity: Entity,
     file: UploadFile,
-    branch: str | None = Form(None),
-    commit_sha: str | None = Form(None),
-    pipeline_url: str | None = Form(None),
-    scan_scope: str | None = Form(None),
-    close_missing: bool = Form(True),
-    confirm_empty: bool = Form(False),
-    principal: Principal = Depends(require_permission("import", "import")),
-    db: AsyncSession = Depends(get_db),
-) -> Import:
-    entity = await db.get(Entity, entity_id)
-    if entity is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entity not found")
+    *,
+    config: ProjectConfig | None,
+    created: list[Entity],
+    branch: str | None,
+    commit_sha: str | None,
+    pipeline_url: str | None,
+    scan_scope: str | None,
+    close_missing: bool,
+    confirm_empty: bool,
+) -> ImportCreated:
+    warnings: list[str] = []
+    if config is not None:
+        if not has_permission(principal, "entity", "write"):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Файл настроек проекта применяется только с правом entity:write",
+            )
+        warnings = await apply_config(db, entity, config, commit_sha=commit_sha or None)
 
     branch = branch or None
-    default_branch = await resolve_default_branch(db, entity_id)
+    default_branch = await resolve_default_branch(db, entity.id)
     if not branch_allowed(branch, default_branch):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -54,7 +69,7 @@ async def create_import(
     storage_key = save_sarif(content, filename)
 
     import_record = Import(
-        entity_id=entity_id,
+        entity_id=entity.id,
         uploaded_by_id=principal.user.id,
         filename=filename,
         storage_key=storage_key,
@@ -65,15 +80,112 @@ async def create_import(
         scan_scope=scan_scope or None,
         close_missing=close_missing,
         confirm_empty=confirm_empty,
+        config_warnings=warnings,
     )
     db.add(import_record)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Конфликт при создании импорта, повторите попытку")
     await db.refresh(import_record)
 
     from app.worker import enqueue_import
     await enqueue_import(str(import_record.id))
 
-    return import_record
+    return ImportCreated.model_validate(import_record).model_copy(update={
+        "entity_path": entity.path_cache,
+        "created_entities": [CreatedEntity(id=e.id, path=e.path_cache) for e in created],
+    })
+
+
+@router.post(
+    "/entities/{entity_id}/imports",
+    response_model=ImportCreated,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_import(
+    entity_id: uuid.UUID,
+    file: UploadFile,
+    config: UploadFile | None = File(None),
+    branch: str | None = Form(None),
+    commit_sha: str | None = Form(None),
+    pipeline_url: str | None = Form(None),
+    scan_scope: str | None = Form(None),
+    close_missing: bool = Form(True),
+    confirm_empty: bool = Form(False),
+    principal: Principal = Depends(require_permission("import", "import")),
+    db: AsyncSession = Depends(get_db),
+) -> ImportCreated:
+    parsed = await _read_config(config)
+    entity = await db.get(Entity, entity_id)
+    if entity is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entity not found")
+    return await _create_import(
+        db, principal, entity, file, config=parsed, created=[],
+        branch=branch, commit_sha=commit_sha, pipeline_url=pipeline_url,
+        scan_scope=scan_scope, close_missing=close_missing, confirm_empty=confirm_empty,
+    )
+
+
+@router.post("/imports", response_model=ImportCreated, status_code=status.HTTP_201_CREATED)
+async def create_import_by_path(
+    file: UploadFile,
+    entity_id: uuid.UUID | None = Form(None),
+    project_path: str | None = Form(None),
+    auto_create: bool = Form(False),
+    config: UploadFile | None = File(None),
+    branch: str | None = Form(None),
+    commit_sha: str | None = Form(None),
+    pipeline_url: str | None = Form(None),
+    scan_scope: str | None = Form(None),
+    close_missing: bool = Form(True),
+    confirm_empty: bool = Form(False),
+    principal: Principal = Depends(require_permission("import", "import")),
+    db: AsyncSession = Depends(get_db),
+) -> ImportCreated:
+    """Единая точка загрузки для CI: проект по entity_id или по пути (с автосозданием)."""
+    project_path = (project_path or "").strip() or None
+    if (entity_id is None) == (project_path is None):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Укажите entity_id или project_path (одно из двух)"
+        )
+    parsed = await _read_config(config)
+
+    created: list[Entity] = []
+    if entity_id is not None:
+        entity = await db.get(Entity, entity_id)
+        if entity is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Entity not found")
+    else:
+        try:
+            entity, _ = await ensure_path(db, project_path, create=False)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+        if entity is None:
+            if not auto_create:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND,
+                    f"Проект «{project_path}» не найден. Передайте auto_create=true, чтобы создать его",
+                )
+            if not has_permission(principal, "entity", "write"):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Автосоздание проектов требует права entity:write"
+                )
+            try:
+                entity, created = await ensure_path(db, project_path, create=True)
+            except IntegrityError:
+                await db.rollback()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Конфликт при создании проекта «{project_path}», повторите попытку",
+                )
+
+    return await _create_import(
+        db, principal, entity, file, config=parsed, created=created,
+        branch=branch, commit_sha=commit_sha, pipeline_url=pipeline_url,
+        scan_scope=scan_scope, close_missing=close_missing, confirm_empty=confirm_empty,
+    )
 
 
 @router.get("/entities/{entity_id}/imports", response_model=list[ImportRead])
