@@ -50,6 +50,8 @@ class DecisionRead(BaseModel):
 
     id: uuid.UUID
     finding_id: uuid.UUID
+    finding_number: int | None = None
+    finding_title: str | None = None
     decision_type: str
     status: str
     reason_tag: str | None

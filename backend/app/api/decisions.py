@@ -71,16 +71,27 @@ async def list_finding_decisions(
 @router.get("/decisions", response_model=list[DecisionRead])
 async def list_decisions(
     decision_status: DecisionStatus | None = Query(None, alias="status"),
+    mine: bool = False,
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
-    _: object = Depends(require_permission("finding", "read")),
+    principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
-) -> list[DecisionRequest]:
-    q = select(DecisionRequest)
+) -> list[DecisionRead]:
+    q = select(DecisionRequest, Finding.number, Finding.title).join(
+        Finding, Finding.id == DecisionRequest.finding_id
+    )
     if decision_status:
         q = q.where(DecisionRequest.status == decision_status)
-    q = q.order_by(DecisionRequest.created_at).offset(offset).limit(limit)
-    return list(await db.scalars(q))
+    if mine:
+        q = q.where(DecisionRequest.requested_by_id == principal.user.id)
+    q = q.order_by(DecisionRequest.created_at.desc()).offset(offset).limit(limit)
+    rows = await db.execute(q)
+    return [
+        DecisionRead.model_validate(req).model_copy(
+            update={"finding_number": number, "finding_title": title}
+        )
+        for req, number, title in rows
+    ]
 
 
 @router.post("/decisions/{decision_id}/approve", response_model=DecisionRead)
