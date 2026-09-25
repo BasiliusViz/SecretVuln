@@ -107,6 +107,44 @@ async def test_bulk_assign(client, appsec, db):
     assert r.status_code == 422
 
 
+async def test_bulk_dedupes_ids_preserving_order(client, appsec, db):
+    _, h = appsec
+    e = await make_entity(db, "svc")
+    a = await make_finding(db, e, "a")
+    b = await make_finding(db, e, "b")
+    r = await client.post(
+        "/api/v1/findings/bulk",
+        json={"ids": [str(a.id), str(b.id), str(a.id)], "action": "confirm"},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["applied"] == 2
+    assert body["skipped"] == []
+
+
+async def test_bulk_assign_clears_manual_assignee_user(client, appsec, db):
+    user, h = appsec
+    other_team = await make_group(db, "other-team")
+    e = await make_entity(db, "svc")
+    a = await make_finding(db, e, "a")
+    # находка вручную назначена конкретному человеку (имитируем напрямую в БД)
+    a.assignee_user_id = user.id
+    a.assigned_manually = True
+    await db.commit()
+
+    r = await client.post(
+        "/api/v1/findings/bulk",
+        json={"ids": [str(a.id)], "action": "assign", "group_id": str(other_team.id)},
+        headers=h,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"] == 1
+    await db.refresh(a)
+    assert a.assignee_group_id == other_team.id
+    assert a.assignee_user_id is None
+
+
 async def test_me_lists_permissions(client, developer):
     _, h = developer
     perms = (await client.get("/api/v1/auth/me", headers=h)).json()["permissions"]
