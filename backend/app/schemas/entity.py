@@ -10,7 +10,6 @@ class EntityCreate(BaseModel):
     slug: str | None = Field(default=None, max_length=100)
     parent_id: uuid.UUID | None = None
     description: str | None = None
-    default_branch: str | None = Field(default=None, max_length=255)
     custom_fields: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -19,7 +18,6 @@ class EntityUpdate(BaseModel):
     slug: str | None = Field(default=None, max_length=100)
     parent_id: uuid.UUID | None = None
     description: str | None = None
-    default_branch: str | None = Field(default=None, max_length=255)
     custom_fields: dict[str, Any] | None = None
 
 
