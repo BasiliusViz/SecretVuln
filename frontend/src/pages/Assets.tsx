@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { apiFetch } from "../api/client";
 
@@ -149,6 +150,9 @@ function TreeNode({
           </span>
         )}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6, flexShrink: 0 }}>
+          <Link to={`/projects/${node.id}/settings`} style={{ fontSize: 12, padding: "2px 10px" }}>
+            {t("settings.open")}
+          </Link>
           <button style={{ fontSize: 12, padding: "2px 10px" }} onClick={() => onAddChild(node)}>
             + {t("projects.addChild")}
           </button>

@@ -12,6 +12,7 @@ import { Imports } from "./pages/Imports";
 import { Inbox } from "./pages/Inbox";
 import { Login } from "./pages/Login";
 import { MyVulns } from "./pages/MyVulns";
+import { ProjectSettings } from "./pages/ProjectSettings";
 import { Roles } from "./pages/Roles";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -46,6 +47,7 @@ export function App() {
             >
               <Route index element={<Dashboard />} />
               <Route path="projects" element={<Assets />} />
+              <Route path="projects/:id/settings" element={<ProjectSettings />} />
               <Route path="vulnerabilities" element={<Findings />} />
               <Route path="f/:ref" element={<FindingWindow />} />
               <Route path="inbox" element={<Inbox />} />
