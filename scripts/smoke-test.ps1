@@ -6,6 +6,7 @@
 #   3. ждёт обработки воркером
 #   4. печатает статистику импортов и находки по критичности
 #   5. повторно грузит semgrep — проверка дедупликации
+#   8. импорт по пути проекта с автосозданием и .secretvuln.yml — проверка владельца
 #
 # Использование:  powershell -File scripts\smoke-test.ps1
 
@@ -21,6 +22,7 @@ Write-Host "== Smoke-тест пайплайна SARIF ==" -ForegroundColor Cyan
 try {
     $h = Invoke-RestMethod "$api/health" -TimeoutSec 5
     if ($h.database -ne "up") { Fail "БД недоступна (health: $($h | ConvertTo-Json -Compress))" }
+    if ($h.storage -ne "up") { Fail "хранилище файлов недоступно ($($h.storage_backend))" }
     Ok "backend + БД доступны"
 } catch { Fail "backend не отвечает на :8000 — запусти scripts\dev.ps1" }
 
@@ -127,5 +129,39 @@ if ($imp.stats.closed -eq 1) {
 } else {
     Fail "ожидали closed=1, получили: $($imp.stats | ConvertTo-Json -Compress)"
 }
+
+# --- 8. Импорт по пути: автосоздание проектов + файл настроек + владелец ---
+Write-Host "`n== Импорт по пути (auto_create + .secretvuln.yml) ==" -ForegroundColor Cyan
+$teamName = "smoke-team"
+try {
+    Invoke-RestMethod "$api/groups" -Method Post -ContentType "application/json" -Headers $headers `
+        -Body (@{ name = $teamName; source = "manual" } | ConvertTo-Json) | Out-Null
+    Ok "создана команда $teamName"
+} catch { Ok "команда $teamName уже есть" }
+
+$stamp = Get-Date -Format 'HHmmss'
+$projectPath = "smoke/run-$stamp/svc"
+$cfg = Join-Path $env:TEMP "sv-smoke.secretvuln.yml"
+Set-Content -Path $cfg -Encoding ascii -Value "version: 1`ndefault_branch: main`nowner: $teamName`nownership:`n  - path: 'app/**'`n    owner: $teamName"
+$resp = curl.exe -s -X POST "$api/imports" -H $authArg `
+    -F "file=@$(Join-Path $samples 'semgrep.sarif')" -F "config=@$cfg" `
+    -F "project_path=$projectPath" -F "auto_create=true" -F "branch=main" | ConvertFrom-Json
+if (-not $resp.id) { Fail "импорт по пути не удался: $($resp | ConvertTo-Json -Compress)" }
+if ($resp.created_entities.Count -ne 3) { Fail "ожидали 3 созданных проекта, получили $($resp.created_entities.Count)" }
+Ok "проекты созданы: $($resp.created_entities.path -join ', ')"
+
+$deadline = (Get-Date).AddSeconds(30)
+do {
+    Start-Sleep -Seconds 2
+    $imp = Invoke-RestMethod "$api/imports/$($resp.id)" -Headers $headers
+} while ($imp.status -in @("pending", "processing") -and (Get-Date) -lt $deadline)
+if ($imp.status -ne "done") { Fail "импорт не обработан: $($imp.status) $($imp.error)" }
+
+$vulns = Invoke-RestMethod "$api/findings?entity_id=$($resp.entity_id)" -Headers $headers
+$owned = @($vulns | Where-Object { $_.assignee_group.name -eq $teamName }).Count
+if ($owned -eq 0 -or $owned -ne @($vulns).Count) {
+    Fail "ожидали, что все $(@($vulns).Count) уязвимостей назначены $teamName, назначено $owned"
+}
+Ok "владелец назначен: $owned уязвимостей → $teamName"
 
 Write-Host "`nГотово. Открой http://localhost:5173 → раздел «Находки» (актив '$entityName')." -ForegroundColor Green

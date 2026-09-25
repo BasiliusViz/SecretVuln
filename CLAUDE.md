@@ -8,7 +8,7 @@ Vulnerability management платформа: импорт находок без�
 - **Фоновые задачи**: Redis + ARQ (обработка SARIF-импортов в воркере)
 - **Авторизация**: Casbin (pycasbin + casbin-sqlalchemy-adapter) — роли настраиваются из админки, не хардкод
 - **Аутентификация**: локальная (email/password + JWT, passlib/bcrypt, pyjwt) и LDAP (ldap3: bind, auto-provisioning, маппинг групп на роли)
-- **Файлы**: MinIO/S3 (boto3, path-style addressing) — загруженные SARIF-файлы хранятся в бакете `sarif-imports`. **ВАЖНО: S3 API проброшен на порт 9002** (localhost:9000 на этой машине перехватывает wslrelay.exe из WSL)
+- **Файлы**: загруженные SARIF — на диске (`SV_STORAGE_PATH`, по умолчанию `backend/data/sarif`) или в S3/MinIO при `SV_STORAGE_BACKEND=s3` (`app/services/storage.py`). MinIO в docker-compose — профиль `s3`, S3 API на порту 9002 (localhost:9000 перехватывает wslrelay.exe)
 - **Frontend**: React 19 + TypeScript (Vite 7), react-router 7, react-i18next, Recharts. Dev-сервер проксирует /api на :8000 (vite.config.ts)
 - **Деплой**: docker-compose (dev), Helm chart (K8s, ещё не реализован — deploy/helm/README.md)
 
@@ -43,7 +43,7 @@ docker-compose.yml     # postgres:16, redis:7, minio (+minio-init создаёт
 Ключевое решение (обсуждено с пользователем, миграции 0002–0003): **никаких Product/Engagement/Test — одна универсальная сущность Entity («актив»), работает как папка.** У каждой компании своя структура, платформа её не навязывает: Entity может содержать другие Entity и/или принимать результаты сканирования — и то и другое одновременно. Без типов узлов, без ограничений вложенности. В UI раздел называется «Активы».
 
 - **User**: email (unique), hashed_password (NULL для LDAP-пользователей), auth_source enum(local|ldap), ldap_dn, is_superuser
-- **Entity** (таблица `entities`): name (unique среди сиблингов: uq_entities_parent_name с NULLS NOT DISTINCT), parent_id (self-FK, ON DELETE CASCADE — удаление сносит поддерево с импортами и находками), description, **custom_fields JSONB**. API `/api/v1/entities` отдаёт плоский список, дерево собирает фронтенд; PATCH parent_id защищён от циклов (`_check_parent` в app/api/entities.py)
+- **Entity** (таблица `entities`): name (unique среди сиблингов: uq_entities_parent_name с NULLS NOT DISTINCT), parent_id (self-FK, ON DELETE CASCADE — удаление сносит поддерево с импортами и находками), description, **custom_fields JSONB**. API `/api/v1/entities` отдаёт плоский список, дерево собирает фронтенд; PATCH parent_id защищён от циклов (`_check_parent` в app/api/entities.py). `slug` (адрес узла, `[a-z0-9._-]`, уникален среди соседей) и `path_cache` (полный путь `fintech/payments/api`, пересчитывается в `app/services/entity_paths.py`); наследуемые настройки `owner_group_id`, `repo_url` (уникален), `repo_type`, `repo_path_prefix`, `default_branch`; `pinned_fields`, `config_file`. Таблица `ownership_rules` (маска → команда, `source` file|manual).
 - **Import**: одна загрузка SARIF-файла в конкретный Entity (entity_id). filename, s3_key, scanner (определяется воркером из tool.driver.name), status enum(pending|processing|done|failed), stats JSONB ({"created","updated","duplicates"}), error, finished_at
 - **Finding**: нормализованная находка, привязана к Entity (entity_id). severity enum(critical|high|medium|low|info), status enum(new|triaged|confirmed|false_positive|risk_accepted|fixed), scanner, rule_id, cwe, file_path, line_start/end, **fingerprint** (дедуп-ключ), raw JSONB (исходный SARIF result — источник правды для ре-нормализации), first_seen/last_seen. Уникальность: `(entity_id, fingerprint)` — область дедупа = узел, куда идут импорты; одинаковая уязвимость в соседних узлах = две находки
 - **Role**: только метаданные для админки (name, description, ldap_group, is_builtin). Сами права и назначения user->role живут в таблице `casbin_rule` (создаётся адаптером Casbin автоматически, НЕ в наших миграциях). `Role.name` должен совпадать с subject в Casbin-политиках
@@ -66,6 +66,19 @@ docker-compose.yml     # postgres:16, redis:7, minio (+minio-init создаёт
 Нормализаторы: Semgrep, Trivy, Gitleaks (всегда high/critical — секреты), Checkov + Default (level→severity: error=high, warning=medium, note=low). Реестр `_REGISTRY` в normalizers.py, матчинг по подстроке имени драйвера.
 
 API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/entities/{id}/imports`, `GET /api/v1/findings` (фильтры: entity_id, severity, status, scanner, limit/offset), `GET /api/v1/findings/stats` (total + by_severity + by_status), `PATCH /api/v1/findings/{id}?status=...`
+
+## Владельцы и окна (этап 2 — РЕАЛИЗОВАН)
+
+Спека `docs/superpowers/specs/2026-09-24-stage2-owners-and-screens.md`, план `docs/superpowers/plans/2026-09-24-stage2-owners-and-screens.md`.
+
+- **Адрес проекта**: `GET/PUT /entities/by-path/{path}`; `POST /imports` принимает `entity_id` или `project_path` + `auto_create=true` (нужно право `entity:write`), ответ содержит `entity_path` и `created_entities`. Фильтр `include_descendants` у `/findings` и `/findings/stats`.
+- **Файл настроек `.secretvuln.yml`** (`app/services/config_file.py`): CI прикладывает полем `config`; битый файл → 422; неизвестная группа → предупреждение в `imports.config_warnings`. Правка поля в админке закрепляет его (`pinned_fields`), файл его больше не перезаписывает; `POST /entities/{id}/settings/unpin` — «Вернуть к файлу»; `GET /entities/{id}/config.yml` — выгрузка. Применение файла требует `entity:write`.
+- **Настройки**: `GET/PATCH /entities/{id}/settings` (значение + источник manual/file/inherited/unset), `PUT /entities/{id}/ownership-rules`, `POST /entities/{id}/reassign`.
+- **Владелец уязвимости** (`app/services/ownership.py`): правила узла → правила предков → владелец проекта → «Без владельца». Считается при импорте для новых и открытых незакреплённых (`assigned_manually=false`); `POST /findings/{id}/assign` (группа/человек или `by_rules`).
+- **Карточка** `GET /findings/{id}` и `/by-number/{n}` — `FindingDetail` с `entity_path`, `code_url` (коммит), `code_url_head` (основная ветка), `help_text` (SARIF rule.help). Шаблоны ссылок — `app/services/code_links.py`.
+- **Совместная работа**: `POST /findings/{id}/comments`, `POST /findings/{id}/help` (флаг `help_requested_at`, снимает AppSec комментарием с `resolve_help`), `POST /findings/bulk` (confirm/false_positive/assign), `GET /decisions?mine=true`. `/auth/me` отдаёт `permissions`, фронтенд проверяет их через `useCan()`.
+- **Фильтры `/findings`**: `status` (повторяемый), `mine`, `unassigned`, `assignee_group_id`, `help_requested`, `pending_decision`, `order=last_seen|severity|number`.
+- **Экраны**: окно уязвимости `/f/SV-N` (`FindingWindow.tsx`), очередь AppSec `/inbox` (только с `finding:approve`, горячие клавиши J/K/X/C/F/A/Enter), «Мои уязвимости» `/my`, настройки проекта `/projects/:id/settings`; общий клиент `src/api/json.ts`, типы `src/api/types.ts`.
 
 ## Аутентификация (РЕАЛИЗОВАНА: local + LDAP)
 
@@ -162,14 +175,17 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - Модели: UUID PK (`UUIDPKMixin`), created_at/updated_at (`TimestampMixin`), enum'ы — Python `str, enum.Enum` + PG native enum
 - Alembic использует sync-драйвер psycopg (URL выводится из async URL в `config.database_url_sync`); новые модели импортировать в `app/models/__init__.py`, иначе autogenerate их не увидит
 - Миграции: `cd backend && alembic upgrade head`; тесты: `/sv-test`; стенд: `/sv-stack`
+- MinIO нужен только при SV_STORAGE_BACKEND=s3: образ закреплён на minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1, запуск docker compose --profile s3 up -d
 
-## Статус (2026-09-20)
+## Статус (2026-09-24)
 
 **Этап 1 «Ядро процесса» — сделано и слито в main** (спека `docs/superpowers/specs/2026-09-19-triage-workflow-and-ai-design.md`, план `docs/superpowers/plans/2026-09-19-stage1-process-core.md`): метаданные импорта (ветка, коммит, объём скана), бэклог только из основной ветки, автозакрытие исчезнувших находок, статус `in_progress`, история `finding_events`, номера SV-N, запросы «ложное / риск принят» с одобрением (`finding:approve`), истечение принятого риска по cron, роль «Разработчик». 45 pytest + smoke-тест зелёные.
 
 **Интерфейс:** переименован — «Проекты» (Entity) и «Уязвимости» (Finding); пять тем с переключателем (янтарная по умолчанию), цвета графиков из переменных темы.
 
-**Дальше:** этап 2 «Владельцы и окна» — окно уязвимости для разработчика, очередь AppSec, команда-владелец с наследованием, правила по путям, ссылки на строку кода; плюс из анализа `docs/proposals/2026-09-20-universal-tree-and-api.md`: путь как адрес, автосоздание проектов из CI, теги, репозиторий как ключ. Затем SLA и метрики, обогащение EPSS/KEV, векторка, MCP для агентов, память команды, встроенный ИИ.
+**Этап 2 «Владельцы и окна» — сделано**: хранилище на диске, адрес проекта и автосоздание из CI, файл настроек с закреплением полей, команда-владелец по правилам путей, ссылки на код, окно уязвимости, очередь AppSec, «Мои уязвимости», настройки проекта.
+
+**Дальше:** этап 3 «Сроки и метрики» — SLA-политики и due_at, просрочки, «Шумные правила», теги проектов (решено 24.09: теги идут вместе со SLA), метрики на дашборде.
 
 ## История (2026-07-06)
 

@@ -28,6 +28,11 @@
 | risk_accepted     | Риск принят         |
 | fixed             | Исправлена          |
 | scanner           | Сканер (названия тулов не переводим: semgrep, trivy...) |
+| owner / assignee_group | Команда (нет команды — «Без владельца») |
+| .secretvuln.yml   | Файл настроек       |
+| inbox             | Очередь AppSec      |
+| help request      | Нужна помощь AppSec |
+| slug / path       | Адрес проекта       |
 
 ## Типографика
 
