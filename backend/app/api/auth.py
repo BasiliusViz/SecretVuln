@@ -12,7 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Principal, get_current_principal
+from app.api.deps import Principal, get_current_principal, has_permission
+from app.authz.permissions import CATALOG
 from app.core.config import get_settings
 from app.core.security import create_access_token, verify_password
 from app.db.session import get_db
@@ -122,4 +123,10 @@ async def me(principal: Principal = Depends(get_current_principal)) -> UserRead:
         is_active=principal.user.is_active,
         is_superuser=principal.user.is_superuser,
         roles=principal.roles,
+        permissions=[
+            f"{resource}:{action}"
+            for resource, actions in CATALOG.items()
+            for action in actions
+            if has_permission(principal, resource, action)
+        ],
     )

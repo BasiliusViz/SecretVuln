@@ -1,7 +1,9 @@
 import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,12 +19,25 @@ from app.models import (
     UserGroup,
     user_group_members,
 )
+from app.models.decision_request import DecisionType
 from app.models.entity import RepoType
 from app.models.finding import FindingStatus, Severity
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
-from app.schemas.finding import FindingAssign, FindingDetail, FindingRead, FindingStatusUpdate
+from app.schemas.decision import DecisionCreate
+from app.schemas.finding import (
+    BulkAction,
+    BulkResult,
+    BulkSkipped,
+    CommentCreate,
+    FindingAssign,
+    FindingDetail,
+    FindingRead,
+    FindingStatusUpdate,
+    HelpRequest,
+)
 from app.schemas.finding_event import FindingEventRead
 from app.services.code_links import build_code_url
+from app.services.decisions import DecisionError, create_request
 from app.services.entity_paths import subtree_ids
 from app.services.entity_settings import effective_settings
 from app.services.events import record_event
@@ -179,15 +194,19 @@ async def list_finding_events(
     finding_id: uuid.UUID,
     _: object = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
-) -> list[FindingEvent]:
+) -> list[FindingEventRead]:
     if await db.get(Finding, finding_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
-    result = await db.scalars(
-        select(FindingEvent)
+    rows = await db.execute(
+        select(FindingEvent, User.full_name, User.email)
+        .outerjoin(User, User.id == FindingEvent.actor_id)
         .where(FindingEvent.finding_id == finding_id)
         .order_by(FindingEvent.created_at, FindingEvent.id)
     )
-    return list(result)
+    return [
+        FindingEventRead.model_validate(event).model_copy(update={"actor_name": full_name or email})
+        for event, full_name, email in rows
+    ]
 
 
 # Ставятся вручную. Ложное/риск — через запросы (decisions), «Исправлена» — только повторным сканом.
@@ -277,3 +296,145 @@ async def assign_finding(
     finding.assignee_group_id = new_group
     await db.commit()
     return await load_finding(db, finding.id)
+
+
+CLOSED_FOR_HELP = {FindingStatus.fixed, *DECISION_STATUSES}
+
+
+async def _finding_or_404(db: AsyncSession, finding_id: uuid.UUID) -> Finding:
+    finding = await db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    return finding
+
+
+@router.post(
+    "/findings/{finding_id}/comments",
+    response_model=FindingEventRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_comment(
+    finding_id: uuid.UUID,
+    data: CommentCreate,
+    principal: Principal = Depends(require_permission("finding", "triage")),
+    db: AsyncSession = Depends(get_db),
+) -> FindingEventRead:
+    finding = await _finding_or_404(db, finding_id)
+    text = data.text.strip()
+    if not text:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Комментарий пустой")
+    if data.resolve_help and not has_permission(principal, "finding", "approve"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Закрыть вопрос может только AppSec (право finding:approve)"
+        )
+    event = record_event(
+        db, finding.id, FindingEventType.comment,
+        actor_type=ActorType.user, actor_id=principal.user.id, reason=text,
+    )
+    if data.resolve_help and finding.help_requested_at is not None:
+        finding.help_requested_at = None
+        record_event(
+            db, finding.id, FindingEventType.help_resolved,
+            actor_type=ActorType.user, actor_id=principal.user.id,
+        )
+    await db.commit()
+    await db.refresh(event)
+    return FindingEventRead.model_validate(event).model_copy(update={
+        "actor_name": principal.user.full_name or principal.user.email,
+    })
+
+
+@router.post("/findings/{finding_id}/help", response_model=FindingDetail)
+async def request_help(
+    finding_id: uuid.UUID,
+    data: HelpRequest,
+    principal: Principal = Depends(require_permission("finding", "triage")),
+    db: AsyncSession = Depends(get_db),
+) -> FindingDetail:
+    finding = await _finding_or_404(db, finding_id)
+    if finding.status in CLOSED_FOR_HELP:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Уязвимость уже закрыта")
+    if finding.help_requested_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Вопрос AppSec уже задан — дождитесь ответа")
+    finding.help_requested_at = datetime.now(timezone.utc)
+    record_event(
+        db, finding.id, FindingEventType.help_requested,
+        actor_type=ActorType.user, actor_id=principal.user.id, reason=data.text.strip(),
+    )
+    await db.commit()
+    return await to_detail(db, await load_finding(db, finding.id))
+
+
+def _first_error(exc: ValidationError) -> str:
+    return str(exc.errors()[0]["msg"]).removeprefix("Value error, ")
+
+
+@router.post("/findings/bulk", response_model=BulkResult)
+async def bulk_action(
+    data: BulkAction,
+    principal: Principal = Depends(require_permission("finding", "triage")),
+    db: AsyncSession = Depends(get_db),
+) -> BulkResult:
+    decision: DecisionCreate | None = None
+    if data.action == "false_positive":
+        if not has_permission(principal, "finding", "approve"):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Отметить ложным сразу может только AppSec (право finding:approve)",
+            )
+        try:
+            decision = DecisionCreate(
+                decision_type=DecisionType.false_positive,
+                reason_tag=data.reason_tag,
+                reason=data.reason,
+            )
+        except ValidationError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, _first_error(exc))
+    if data.action == "assign" and await db.get(UserGroup, data.group_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Команда не найдена")
+
+    found = {f.id: f for f in await db.scalars(select(Finding).where(Finding.id.in_(data.ids)))}
+    applied = 0
+    skipped: list[BulkSkipped] = []
+    for finding_id in data.ids:
+        finding = found.get(finding_id)
+        if finding is None:
+            skipped.append(BulkSkipped(id=finding_id, reason="Уязвимость не найдена"))
+            continue
+        if data.action == "confirm":
+            if finding.status not in MANUAL_STATUSES:
+                skipped.append(BulkSkipped(id=finding_id, reason="Уже закрыта или решена"))
+                continue
+            if finding.status == FindingStatus.confirmed:
+                skipped.append(BulkSkipped(id=finding_id, reason="Уже подтверждена"))
+                continue
+            previous = finding.status
+            finding.status = FindingStatus.confirmed
+            record_event(
+                db, finding.id, FindingEventType.status_changed,
+                actor_type=ActorType.user, actor_id=principal.user.id,
+                from_status=previous, to_status=FindingStatus.confirmed,
+            )
+        elif data.action == "false_positive":
+            try:
+                await create_request(
+                    db, finding, decision, user_id=principal.user.id, can_approve=True
+                )
+            except DecisionError as exc:
+                skipped.append(BulkSkipped(id=finding_id, reason=exc.message))
+                continue
+        else:
+            record_event(
+                db, finding.id, FindingEventType.assigned,
+                actor_type=ActorType.user, actor_id=principal.user.id,
+                payload={
+                    "from_group_id": str(finding.assignee_group_id) if finding.assignee_group_id else None,
+                    "to_group_id": str(data.group_id),
+                    "by_rules": False,
+                },
+            )
+            finding.assignee_group_id = data.group_id
+            finding.assigned_manually = True
+        applied += 1
+    await db.commit()
+    return BulkResult(applied=applied, skipped=skipped)

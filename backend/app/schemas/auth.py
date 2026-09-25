@@ -25,3 +25,4 @@ class UserRead(BaseModel):
     is_active: bool
     is_superuser: bool
     roles: list[str] = []
+    permissions: list[str] = []

@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from app.models.decision_request import ReasonTag
 from app.models.finding import FindingStatus
 
 
@@ -73,3 +74,37 @@ class FindingDetail(FindingRead):
     code_url: str | None = None
     code_url_head: str | None = None
     help_text: str | None = None
+
+
+class CommentCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+    # AppSec отвечает на «Нужна помощь» и снимает флаг
+    resolve_help: bool = False
+
+
+class HelpRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+
+
+class BulkAction(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    action: Literal["confirm", "false_positive", "assign"]
+    reason_tag: ReasonTag | None = None
+    reason: str | None = Field(default=None, max_length=2000)
+    group_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "BulkAction":
+        if self.action == "assign" and self.group_id is None:
+            raise ValueError("Для назначения укажите команду")
+        return self
+
+
+class BulkSkipped(BaseModel):
+    id: uuid.UUID
+    reason: str
+
+
+class BulkResult(BaseModel):
+    applied: int
+    skipped: list[BulkSkipped]

@@ -19,3 +19,4 @@ class FindingEventRead(BaseModel):
     reason_tag: str | None
     payload: dict[str, Any]
     created_at: datetime
+    actor_name: str | None = None
