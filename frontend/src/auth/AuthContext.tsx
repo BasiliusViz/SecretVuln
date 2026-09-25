@@ -7,6 +7,8 @@ export interface CurrentUser {
   auth_source: string;
   is_superuser: boolean;
   roles: string[];
+  // Права вида "finding:approve" — считает бэкенд (/auth/me), у суперюзера все
+  permissions: string[];
 }
 
 interface AuthState {
@@ -96,4 +98,13 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
+}
+
+/** Проверка права текущего пользователя, например can("finding:approve"). */
+export function useCan(): (permission: string) => boolean {
+  const { user } = useAuth();
+  return useCallback(
+    (permission: string) => !!user && user.permissions.includes(permission),
+    [user],
+  );
 }
