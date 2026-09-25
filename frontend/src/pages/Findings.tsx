@@ -1,44 +1,57 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
-import { apiFetch } from "../api/client";
+import { apiJson } from "../api/json";
+import type { EntityNode, Finding, Group } from "../api/types";
+import { useCan } from "../auth/AuthContext";
 import { SeverityBadge } from "../components/SeverityBadge";
-import type { Severity } from "../theme/severity";
+import { MONO } from "../components/ui";
 import { SEVERITY_ORDER } from "../theme/severity";
 
-interface FindingRecord {
-  id: string;
-  number: number;
-  title: string;
-  severity: Severity;
-  status: string;
-  scanner: string;
-  rule_id: string | null;
-  file_path: string | null;
-  line_start: number | null;
-  cwe: string | null;
-  first_seen: string;
-  last_seen: string;
-}
+const STATUSES = ["new", "triaged", "confirmed", "in_progress", "false_positive", "risk_accepted", "fixed"];
+const UNASSIGNED = "__none";
+const CELL = { padding: "8px 12px" } as const;
+const HEAD = { padding: "8px 12px", fontWeight: 500 } as const;
 
 export function Findings() {
   const { t } = useTranslation();
-  const [findings, setFindings] = useState<FindingRecord[] | null>(null);
-  const [severityFilter, setSeverityFilter] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("");
+  const can = useCan();
+  const [findings, setFindings] = useState<Finding[] | null>(null);
+  const [entities, setEntities] = useState<EntityNode[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [severityFilter, setSeverityFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [entityFilter, setEntityFilter] = useState("");
+  const [withChildren, setWithChildren] = useState(true);
+  const [teamFilter, setTeamFilter] = useState("");
 
   const load = useCallback(() => {
     const params = new URLSearchParams();
     if (severityFilter) params.set("severity", severityFilter);
     if (statusFilter) params.set("status", statusFilter);
+    if (entityFilter) {
+      params.set("entity_id", entityFilter);
+      if (withChildren) params.set("include_descendants", "true");
+    }
+    if (teamFilter === UNASSIGNED) params.set("unassigned", "true");
+    else if (teamFilter) params.set("assignee_group_id", teamFilter);
     params.set("limit", "200");
-    apiFetch(`/api/v1/findings?${params}`)
-      .then((r) => r.json())
-      .then(setFindings)
-      .catch(() => setFindings([]));
-  }, [severityFilter, statusFilter]);
+    void apiJson<Finding[]>(`/api/v1/findings?${params}`).then((r) => setFindings(r.data ?? []));
+  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter]);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    void apiJson<EntityNode[]>("/api/v1/entities").then((r) =>
+      setEntities([...(r.data ?? [])].sort((a, b) => a.path.localeCompare(b.path))),
+    );
+  }, []);
+
+  const canSeeGroups = can("group:read");
+  useEffect(() => {
+    if (canSeeGroups) void apiJson<Group[]>("/api/v1/groups").then((r) => setGroups(r.data ?? []));
+  }, [canSeeGroups]);
 
   const inputStyle = {
     fontFamily: "inherit",
@@ -50,8 +63,6 @@ export function Findings() {
     padding: "6px 10px",
   };
 
-  const statuses = ["new", "triaged", "confirmed", "in_progress", "false_positive", "risk_accepted", "fixed"];
-
   return (
     <div>
       <h1>{t("vulns.title")}</h1>
@@ -61,98 +72,120 @@ export function Findings() {
           style={{ ...inputStyle, minWidth: 140 }}
           value={severityFilter}
           onChange={(e) => setSeverityFilter(e.target.value)}
+          aria-label={t("severity.label")}
         >
-          <option value="">{t("severity.label")}: {t("vulns.all")}</option>
+          <option value="">
+            {t("severity.label")}: {t("vulns.all")}
+          </option>
           {SEVERITY_ORDER.map((sev) => (
-            <option key={sev} value={sev}>{t(`severity.${sev}`)}</option>
+            <option key={sev} value={sev}>
+              {t(`severity.${sev}`)}
+            </option>
           ))}
         </select>
         <select
           style={{ ...inputStyle, minWidth: 160 }}
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
+          aria-label={t("status.label")}
         >
-          <option value="">{t("status.label")}: {t("vulns.all")}</option>
-          {statuses.map((st) => (
-            <option key={st} value={st}>{t(`status.${st}`)}</option>
+          <option value="">
+            {t("status.label")}: {t("vulns.all")}
+          </option>
+          {STATUSES.map((st) => (
+            <option key={st} value={st}>
+              {t(`status.${st}`)}
+            </option>
+          ))}
+        </select>
+        <select
+          style={{ ...inputStyle, minWidth: 200 }}
+          value={entityFilter}
+          onChange={(e) => setEntityFilter(e.target.value)}
+          aria-label={t("vulns.project")}
+        >
+          <option value="">{t("vulns.allProjects")}</option>
+          {entities.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.path}
+            </option>
+          ))}
+        </select>
+        {entityFilter && (
+          <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+            <input type="checkbox" checked={withChildren} onChange={(e) => setWithChildren(e.target.checked)} />
+            {t("vulns.includeChildren")}
+          </label>
+        )}
+        <select
+          style={{ ...inputStyle, minWidth: 160 }}
+          value={teamFilter}
+          onChange={(e) => setTeamFilter(e.target.value)}
+          aria-label={t("team.label")}
+        >
+          <option value="">{t("team.all")}</option>
+          <option value={UNASSIGNED}>{t("team.none")}</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
           ))}
         </select>
         {findings !== null && (
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {t("vulns.count", { count: findings.length })}
-          </span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("vulns.count", { count: findings.length })}</span>
         )}
       </div>
 
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         {findings === null ? (
-          <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>
-            {t("common.loading")}
-          </p>
+          <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>{t("common.loading")}</p>
         ) : findings.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>
-            {t("vulns.empty")}
-          </p>
+          <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>{t("vulns.empty")}</p>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)", textAlign: "left" }}>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.number")}</th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("severity.label")}</th>
-                <th style={{ padding: "8px 12px", fontWeight: 500, minWidth: 200 }}>
-                  {t("vulns.title")}
-                </th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.scanner")}</th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.file")}</th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("status.label")}</th>
-                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("vulns.lastSeen")}</th>
+                <th style={HEAD}>{t("vulns.number")}</th>
+                <th style={HEAD}>{t("severity.label")}</th>
+                <th style={{ ...HEAD, minWidth: 200 }}>{t("vulns.title")}</th>
+                <th style={HEAD}>{t("team.label")}</th>
+                <th style={HEAD}>{t("vulns.scanner")}</th>
+                <th style={HEAD}>{t("vulns.file")}</th>
+                <th style={HEAD}>{t("status.label")}</th>
+                <th style={HEAD}>{t("vulns.lastSeen")}</th>
               </tr>
             </thead>
             <tbody>
               {findings.map((f) => (
                 <tr key={f.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                  <td
-                    style={{
-                      padding: "8px 12px",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 12,
-                      color: "var(--text-secondary)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    SV-{f.number}
+                  <td style={{ ...CELL, ...MONO, whiteSpace: "nowrap" }}>
+                    <Link to={`/f/SV-${f.number}`}>SV-{f.number}</Link>
                   </td>
-                  <td style={{ padding: "8px 12px" }}>
+                  <td style={CELL}>
                     <SeverityBadge severity={f.severity} />
                   </td>
-                  <td style={{ padding: "8px 12px" }}>
-                    <div style={{ fontWeight: 500 }}>{f.title.slice(0, 100)}</div>
-                    {f.rule_id && (
-                      <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                        {f.rule_id}
-                      </div>
-                    )}
+                  <td style={CELL}>
+                    <Link to={`/f/SV-${f.number}`} style={{ fontWeight: 500, color: "inherit" }}>
+                      {f.title.slice(0, 100)}
+                    </Link>
+                    {f.rule_id && <div style={{ ...MONO, fontSize: 11, color: "var(--text-muted)" }}>{f.rule_id}</div>}
                   </td>
-                  <td style={{ padding: "8px 12px" }}>{f.scanner}</td>
+                  <td style={{ ...CELL, fontSize: 12 }}>{f.assignee_group?.name ?? t("team.none")}</td>
+                  <td style={CELL}>{f.scanner}</td>
                   <td
                     style={{
-                      padding: "8px 12px",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 12,
+                      ...CELL,
+                      ...MONO,
                       maxWidth: 250,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {f.file_path
-                      ? `${f.file_path}${f.line_start ? `:${f.line_start}` : ""}`
-                      : "—"}
+                    {f.file_path ? `${f.file_path}${f.line_start ? `:${f.line_start}` : ""}` : t("common.none")}
                   </td>
-                  <td style={{ padding: "8px 12px", fontSize: 12 }}>
-                    {t(`status.${f.status}`)}
-                  </td>
-                  <td style={{ padding: "8px 12px", color: "var(--text-muted)", fontSize: 12 }}>
+                  <td style={{ ...CELL, fontSize: 12 }}>{t(`status.${f.status}`)}</td>
+                  <td style={{ ...CELL, color: "var(--text-muted)", fontSize: 12 }}>
                     {new Date(f.last_seen).toLocaleString("ru-RU")}
                   </td>
                 </tr>
