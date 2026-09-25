@@ -95,7 +95,7 @@ export function Inbox() {
       else if (key === "k") setCursor((c) => Math.max(c - 1, 0));
       else if (key === "x" && list[cursor]) toggle(list[cursor].id);
       else if (key === "c") void confirm();
-      else if (key === "f") setFpOpen(true);
+      else if (key === "f" && targets.length > 0) setFpOpen(true);
       else if (key === "a") teamRef.current?.focus();
       else if (e.key === "Enter" && list[cursor]) navigate(`/f/SV-${list[cursor].number}`);
       else return;
@@ -103,7 +103,7 @@ export function Inbox() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items, cursor, fpOpen, confirm, toggle, navigate]);
+  }, [items, cursor, fpOpen, confirm, toggle, navigate, targets]);
 
   const assign = async () => {
     if (!team) return;
@@ -131,7 +131,10 @@ export function Inbox() {
         <button onClick={() => void confirm()} disabled={targets.length === 0}>
           {t("inbox.confirm")}
         </button>
-        <button onClick={() => setFpOpen(true)} disabled={targets.length === 0}>
+        <button
+          onClick={() => targets.length > 0 && setFpOpen(true)}
+          disabled={targets.length === 0}
+        >
           {t("inbox.falsePositive")}
         </button>
         <select ref={teamRef} value={team} onChange={(e) => setTeam(e.target.value)} aria-label={t("inbox.pickTeam")}>

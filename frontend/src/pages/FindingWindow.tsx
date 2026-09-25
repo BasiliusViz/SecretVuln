@@ -52,6 +52,16 @@ export function FindingWindow() {
   }, [number, t]);
 
   useEffect(() => {
+    // Переход между /f/SV-N: сбрасываем состояние предыдущей находки, иначе на миг
+    // видно старые данные (или старую ошибку) поверх нового номера.
+    setFinding(null);
+    setLoadError(null);
+    setEvents([]);
+    setDecisions([]);
+    setMessage(null);
+  }, [number]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 

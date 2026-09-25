@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -25,6 +25,7 @@ export function Findings() {
   const [entityFilter, setEntityFilter] = useState("");
   const [withChildren, setWithChildren] = useState(true);
   const [teamFilter, setTeamFilter] = useState("");
+  const requestId = useRef(0);
 
   const load = useCallback(() => {
     const params = new URLSearchParams();
@@ -37,7 +38,12 @@ export function Findings() {
     if (teamFilter === UNASSIGNED) params.set("unassigned", "true");
     else if (teamFilter) params.set("assignee_group_id", teamFilter);
     params.set("limit", "200");
-    void apiJson<Finding[]>(`/api/v1/findings?${params}`).then((r) => setFindings(r.data ?? []));
+    // Фильтры меняются быстрее, чем приходят ответы — игнорируем устаревший ответ,
+    // если за время запроса уже стартовал более новый.
+    const id = ++requestId.current;
+    void apiJson<Finding[]>(`/api/v1/findings?${params}`).then((r) => {
+      if (id === requestId.current) setFindings(r.data ?? []);
+    });
   }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter]);
 
   useEffect(load, [load]);
