@@ -58,6 +58,26 @@ async def unique_slug(
         n += 1
 
 
+async def unique_name(
+    db: AsyncSession, parent_id: uuid.UUID | None, base: str, *, exclude_id: uuid.UUID | None = None
+) -> str:
+    """Аналог unique_slug для имени: узел, автосоздаваемый ensure_path, получает имя = slug
+    сегмента пути; если у соседа уже есть такое имя (при другом slug), подбираем «-2», «-3»,
+    чтобы не упереться в uq_entities_parent_name на каждом повторе."""
+    name, n = base, 2
+    while True:
+        q = select(Entity.id).where(
+            Entity.parent_id.is_not_distinct_from(parent_id), Entity.name == name
+        )
+        if exclude_id is not None:
+            q = q.where(Entity.id != exclude_id)
+        if await db.scalar(q) is None:
+            return name
+        suffix = f"-{n}"
+        name = f"{base[:255 - len(suffix)]}{suffix}"
+        n += 1
+
+
 async def build_path(db: AsyncSession, parent_id: uuid.UUID | None, slug: str) -> str:
     if parent_id is None:
         return slug
@@ -96,10 +116,11 @@ async def ensure_path(
         if node is None:
             if not create:
                 return None, []
+            parent_id = parent.id if parent else None
             node = Entity(
-                name=slug,
+                name=await unique_name(db, parent_id, slug),
                 slug=slug,
-                parent_id=parent.id if parent else None,
+                parent_id=parent_id,
                 path_cache=current,
                 custom_fields={},
             )

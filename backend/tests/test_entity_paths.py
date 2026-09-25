@@ -112,13 +112,36 @@ async def test_get_by_path(client, admin):
     assert r.status_code == 422
 
 
-async def test_put_by_path_conflict_returns_409(client, admin):
+async def test_put_by_path_name_conflict_gets_unique_name(client, admin):
     """Автосоздаваемый узел цепочки называется как сегмент пути (slug); если сосед с таким
-    именем уже есть под другим slug, вставка ловит IntegrityError по uq_entities_parent_name —
-    должно вернуть 409, а не 500."""
+    именем уже есть под другим slug, узел получает уникальное имя («a-2»), как unique_slug
+    для адреса, вместо падения на uq_entities_parent_name."""
     _, h = admin
     await _create(client, h, "a", slug="a-taken")
     r = await client.put("/api/v1/entities/by-path/a/b", json={}, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["path"] == "a/b"
+
+    # Автосозданный промежуточный узел (адрес «a», рядом с сегментом «a-taken») получил
+    # уникальное имя, а не упал на конфликте.
+    intermediate = (await client.get("/api/v1/entities/by-path/a", headers=h)).json()
+    assert intermediate["slug"] == "a"
+    assert intermediate["name"] == "a-2"
+
+
+async def test_put_by_path_genuine_name_race_still_409s(client, admin, monkeypatch):
+    """Настоящая гонка (concurrent insert обходит проверку уникальности) всё ещё должна
+    попадать на uq_entities_parent_name и вернуть 409, а не 500."""
+    import app.services.entity_paths as entity_paths_mod
+
+    _, h = admin
+    await _create(client, h, "a")
+
+    async def _fake_unique_name(*_args, **_kwargs):
+        return "a"
+
+    monkeypatch.setattr(entity_paths_mod, "unique_name", _fake_unique_name)
+    r = await client.put("/api/v1/entities/by-path/b", json={}, headers=h)
     assert r.status_code == 409
 
 
