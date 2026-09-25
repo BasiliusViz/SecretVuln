@@ -63,3 +63,13 @@ class FindingAssign(BaseModel):
     user_id: uuid.UUID | None = None
     # true — снять ручное назначение и назначить по правилам
     by_rules: bool = False
+
+
+class FindingDetail(FindingRead):
+    """Карточка для окна уязвимости: адрес проекта, ссылки на код, рекомендация сканера."""
+
+    entity_name: str = ""
+    entity_path: str = ""
+    code_url: str | None = None
+    code_url_head: str | None = None
+    help_text: str | None = None

@@ -1,17 +1,30 @@
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, has_permission, require_permission
 from app.db.session import get_db
-from app.models import Entity, Finding, User, UserGroup
+from app.models import (
+    DecisionRequest,
+    DecisionStatus,
+    Entity,
+    Finding,
+    Import,
+    User,
+    UserGroup,
+    user_group_members,
+)
+from app.models.entity import RepoType
 from app.models.finding import FindingStatus, Severity
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
-from app.schemas.finding import FindingAssign, FindingRead, FindingStatusUpdate
+from app.schemas.finding import FindingAssign, FindingDetail, FindingRead, FindingStatusUpdate
 from app.schemas.finding_event import FindingEventRead
+from app.services.code_links import build_code_url
 from app.services.entity_paths import subtree_ids
+from app.services.entity_settings import effective_settings
 from app.services.events import record_event
 from app.services.ownership import build_resolver
 
@@ -35,16 +48,45 @@ async def load_finding(db: AsyncSession, finding_id: uuid.UUID) -> Finding:
     )
 
 
+async def to_detail(db: AsyncSession, finding: Finding) -> FindingDetail:
+    entity = await db.get(Entity, finding.entity_id)
+    settings = await effective_settings(db, entity)
+    imp = await db.get(Import, finding.import_id) if finding.import_id else None
+    repo_url = (imp.repo_url if imp else None) or settings["repo_url"]["value"]
+    repo_type_value = settings["repo_type"]["value"]
+    common = dict(
+        repo_url=repo_url,
+        repo_type=RepoType(repo_type_value) if repo_type_value else None,
+        path=finding.file_path,
+        line=finding.line_start,
+        path_prefix=settings["repo_path_prefix"]["value"],
+    )
+    return FindingDetail.model_validate(finding).model_copy(update={
+        "entity_name": entity.name,
+        "entity_path": entity.path_cache,
+        "code_url": build_code_url(ref=finding.commit_sha, ref_is_commit=True, **common),
+        "code_url_head": build_code_url(
+            ref=settings["default_branch"]["value"], ref_is_commit=False, **common
+        ),
+    })
+
+
 @router.get("/findings", response_model=list[FindingRead])
 async def list_findings(
     entity_id: uuid.UUID | None = None,
     include_descendants: bool = False,
     severity: Severity | None = None,
-    finding_status: FindingStatus | None = Query(None, alias="status"),
+    finding_status: list[FindingStatus] | None = Query(None, alias="status"),
     scanner: str | None = None,
+    assignee_group_id: uuid.UUID | None = None,
+    unassigned: bool = False,
+    mine: bool = False,
+    help_requested: bool = False,
+    pending_decision: bool = False,
+    order: Literal["last_seen", "severity", "number"] = "last_seen",
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
-    _: object = Depends(require_permission("finding", "read")),
+    principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[Finding]:
     q = select(Finding)
@@ -53,11 +95,39 @@ async def list_findings(
     if severity:
         q = q.where(Finding.severity == severity)
     if finding_status:
-        q = q.where(Finding.status == finding_status)
+        q = q.where(Finding.status.in_(finding_status))
     if scanner:
         q = q.where(Finding.scanner == scanner)
-    q = q.order_by(Finding.last_seen.desc()).offset(offset).limit(limit)
-    result = await db.scalars(q)
+    if assignee_group_id:
+        q = q.where(Finding.assignee_group_id == assignee_group_id)
+    if unassigned:
+        q = q.where(Finding.assignee_group_id.is_(None))
+    if help_requested:
+        q = q.where(Finding.help_requested_at.is_not(None))
+    if pending_decision:
+        q = q.where(
+            select(DecisionRequest.id)
+            .where(
+                DecisionRequest.finding_id == Finding.id,
+                DecisionRequest.status == DecisionStatus.pending,
+            )
+            .exists()
+        )
+    if mine:
+        my_groups = select(user_group_members.c.group_id).where(
+            user_group_members.c.user_id == principal.user.id
+        )
+        q = q.where(or_(
+            Finding.assignee_user_id == principal.user.id,
+            Finding.assignee_group_id.in_(my_groups),
+        ))
+    if order == "severity":
+        q = q.order_by(Finding.severity, Finding.first_seen)
+    elif order == "number":
+        q = q.order_by(Finding.number.desc())
+    else:
+        q = q.order_by(Finding.last_seen.desc())
+    result = await db.scalars(q.offset(offset).limit(limit))
     return list(result)
 
 
@@ -80,28 +150,28 @@ async def findings_stats(
     return {"total": total, "by_severity": by_severity, "by_status": by_status}
 
 
-@router.get("/findings/by-number/{number}", response_model=FindingRead)
+@router.get("/findings/by-number/{number}", response_model=FindingDetail)
 async def get_finding_by_number(
     number: int,
     _: object = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
-) -> Finding:
+) -> FindingDetail:
     finding = await db.scalar(select(Finding).where(Finding.number == number))
     if finding is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
-    return finding
+    return await to_detail(db, finding)
 
 
-@router.get("/findings/{finding_id}", response_model=FindingRead)
+@router.get("/findings/{finding_id}", response_model=FindingDetail)
 async def get_finding(
     finding_id: uuid.UUID,
     _: object = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
-) -> Finding:
+) -> FindingDetail:
     finding = await db.get(Finding, finding_id)
     if finding is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
-    return finding
+    return await to_detail(db, finding)
 
 
 @router.get("/findings/{finding_id}/events", response_model=list[FindingEventRead])
