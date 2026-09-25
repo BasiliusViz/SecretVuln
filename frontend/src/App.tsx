@@ -9,6 +9,7 @@ import { FindingWindow } from "./pages/FindingWindow";
 import { Findings } from "./pages/Findings";
 import { Groups } from "./pages/Groups";
 import { Imports } from "./pages/Imports";
+import { Inbox } from "./pages/Inbox";
 import { Login } from "./pages/Login";
 import { Roles } from "./pages/Roles";
 
@@ -46,6 +47,7 @@ export function App() {
               <Route path="projects" element={<Assets />} />
               <Route path="vulnerabilities" element={<Findings />} />
               <Route path="f/:ref" element={<FindingWindow />} />
+              <Route path="inbox" element={<Inbox />} />
               <Route path="imports" element={<Imports />} />
               <Route path="groups" element={<Groups />} />
               <Route path="roles" element={<Roles />} />

@@ -1,23 +1,26 @@
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
-import { useAuth } from "../auth/AuthContext";
+import { useAuth, useCan } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { THEMES, isThemeId } from "../theme/themes";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: { to: string; key: string; end?: boolean; perm?: string }[] = [
   { to: "/", key: "nav.dashboard", end: true },
+  { to: "/my", key: "nav.my" },
+  { to: "/inbox", key: "nav.inbox", perm: "finding:approve" },
   { to: "/projects", key: "nav.projects" },
   { to: "/vulnerabilities", key: "nav.vulns" },
   { to: "/imports", key: "nav.imports" },
   { to: "/groups", key: "nav.groups" },
   { to: "/roles", key: "nav.rolesNav" },
-] as const;
+];
 
 export function Layout() {
   const { t } = useTranslation();
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
+  const can = useCan();
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
@@ -49,11 +52,11 @@ export function Layout() {
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("app.tagline")}</div>
         </div>
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.filter((item) => !item.perm || can(item.perm)).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
-            end={"end" in item && item.end}
+            end={item.end}
             style={({ isActive }) => ({
               padding: "8px 10px",
               fontFamily: "var(--font-display)",
