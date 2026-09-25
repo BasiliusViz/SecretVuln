@@ -36,6 +36,7 @@ def test_parse_valid():
     b"version: 2",
     b"version: 1\nunknown_key: 1",
     b"version: 1\nrepo:\n  type: svn",
+    b"version: 1\nrepo:\n  url: javascript:alert(1)",
 ])
 def test_parse_invalid(content):
     with pytest.raises(ConfigError):

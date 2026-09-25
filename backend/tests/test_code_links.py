@@ -48,6 +48,17 @@ def test_guess_repo_type():
     assert guess_repo_type("https://code.corp/o/r") is None
 
 
+@pytest.mark.parametrize("bad_url", [
+    "javascript:alert(1)",
+    "ftp://git.corp/team/app",
+])
+def test_build_code_url_rejects_non_http_schemes(bad_url):
+    assert build_code_url(
+        repo_url=bad_url, repo_type=RepoType.gitlab, ref="main", path="a.py", line=1,
+        ref_is_commit=False,
+    ) is None
+
+
 async def test_detail_has_links_and_path(client, admin, db):
     _, h = admin
     parent = await make_entity(
@@ -76,3 +87,34 @@ async def test_detail_without_repo_has_no_links(client, admin, db):
     body = (await client.get(f"/api/v1/findings/{f.id}", headers=h)).json()
     assert body["code_url"] is None
     assert body["code_url_head"] is None
+
+
+async def test_project_repo_wins_over_sarif_repo(client, admin, db):
+    """Проект сам знает свой репозиторий — SARIF repositoryUri из отчёта сканера игнорируется."""
+    from tests.factories import make_import
+
+    _, h = admin
+    e = await make_entity(
+        db, "svc", repo_url="https://gitlab.corp/team/app", repo_type=RepoType.gitlab,
+        default_branch="main",
+    )
+    imp = await make_import(db, e, repo_url="https://github.com/untrusted/other")
+    f = await make_finding(
+        db, e, "fp", file_path="src/a.py", line_start=3, commit_sha="c0ffee", import_id=imp.id,
+    )
+    body = (await client.get(f"/api/v1/findings/{f.id}", headers=h)).json()
+    assert body["code_url"] == "https://gitlab.corp/team/app/-/blob/c0ffee/src/a.py#L3"
+
+
+async def test_sarif_repo_used_when_project_has_none(client, admin, db):
+    """Проект не знает свой репозиторий — берём URL из SARIF-provenance, тип угадываем по нему."""
+    from tests.factories import make_import
+
+    _, h = admin
+    e = await make_entity(db, "svc")
+    imp = await make_import(db, e, repo_url="https://github.com/team/app")
+    f = await make_finding(
+        db, e, "fp", file_path="src/a.py", line_start=3, commit_sha="c0ffee", import_id=imp.id,
+    )
+    body = (await client.get(f"/api/v1/findings/{f.id}", headers=h)).json()
+    assert body["code_url"] == "https://github.com/team/app/blob/c0ffee/src/a.py#L3"

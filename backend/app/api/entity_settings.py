@@ -28,6 +28,7 @@ from app.services.entity_settings import (
     FIELD_PIN,
     effective_settings,
     find_repo_owner,
+    is_http_url,
     lineage,
     normalize_repo_url,
     own_source,
@@ -115,6 +116,11 @@ async def update_settings(
         if key in fields and isinstance(fields[key], str):
             fields[key] = fields[key].strip() or None
     if fields.get("repo_url"):
+        if not is_http_url(fields["repo_url"]):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "repo_url: допускаются только ссылки http:// или https://",
+            )
         fields["repo_url"] = normalize_repo_url(fields["repo_url"])
         other = await find_repo_owner(db, fields["repo_url"], exclude_id=entity.id)
         if other is not None:

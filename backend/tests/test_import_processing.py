@@ -7,6 +7,30 @@ from app.services.sarif import parse_sarif
 from tests.factories import make_entity, make_import, make_sarif
 
 
+async def test_provenance_repo_url_stored_only_when_http(db):
+    entity = await make_entity(db)
+    imp = await make_import(db, entity)
+    runs = parse_sarif(make_sarif(
+        "Semgrep", [{"fp": "a"}],
+        provenance={"repositoryUri": "https://GitLab.corp/Team/App.git", "branch": "main"},
+    ))
+    await apply_import(db, imp, runs)
+    await db.commit()
+    assert imp.repo_url == "https://gitlab.corp/Team/App"
+
+
+async def test_provenance_non_http_repo_url_is_dropped(db):
+    entity = await make_entity(db)
+    imp = await make_import(db, entity)
+    runs = parse_sarif(make_sarif(
+        "Semgrep", [{"fp": "a"}],
+        provenance={"repositoryUri": "javascript:alert(1)", "branch": "main"},
+    ))
+    await apply_import(db, imp, runs)
+    await db.commit()
+    assert imp.repo_url is None
+
+
 async def _run(db, entity, results, **import_kw):
     imp = await make_import(db, entity, **import_kw)
     stats = await apply_import(db, imp, parse_sarif(make_sarif("Semgrep", results)))

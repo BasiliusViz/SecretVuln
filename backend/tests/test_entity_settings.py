@@ -119,6 +119,18 @@ async def test_ownership_rules_replace_and_inherit(client, admin, db):
     assert [x["entity_path"] for x in child_body["inherited_rules"]] == ["fintech", "fintech"]
 
 
+async def test_patch_rejects_non_http_repo_url(client, admin, db):
+    _, h = admin
+    e = await make_entity(db, "svc")
+    r = await client.patch(
+        f"/api/v1/entities/{e.id}/settings",
+        json={"repo_url": "javascript:alert(1)"},
+        headers=h,
+    )
+    assert r.status_code == 422
+    assert "http" in r.json()["detail"].lower()
+
+
 async def test_settings_write_requires_permission(client, developer, db):
     _, h = developer
     e = await make_entity(db, "svc")

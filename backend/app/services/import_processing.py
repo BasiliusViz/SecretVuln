@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.finding import OPEN_STATUSES, Finding, FindingStatus
 from app.models.finding_event import FindingEventType
 from app.models.import_ import Import
+from app.services.entity_settings import is_http_url, normalize_repo_url
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
 from app.services.events import record_event
 from app.services.ownership import build_resolver, reassign_entity
@@ -26,7 +27,8 @@ def _apply_provenance(imp: Import, runs: list[SarifRun]) -> None:
     for run in runs:
         imp.branch = imp.branch or run.branch
         imp.commit_sha = imp.commit_sha or run.revision
-        imp.repo_url = imp.repo_url or run.repository_uri
+        if imp.repo_url is None and run.repository_uri and is_http_url(run.repository_uri):
+            imp.repo_url = normalize_repo_url(run.repository_uri)
 
 
 async def _close_missing(

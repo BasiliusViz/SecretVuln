@@ -37,6 +37,11 @@ def normalize_repo_url(url: str) -> str:
     return value
 
 
+def is_http_url(url: str) -> bool:
+    """Ссылки на код собираются только из http(s)-адресов (защита от javascript:/data: и т.п.)."""
+    return urlsplit(url).scheme in ("http", "https")
+
+
 async def lineage(db: AsyncSession, entity: Entity) -> list[Entity]:
     """Узел и его предки: [узел, родитель, …, корень]."""
     chain = [entity]

@@ -36,7 +36,7 @@ from app.schemas.finding import (
     HelpRequest,
 )
 from app.schemas.finding_event import FindingEventRead
-from app.services.code_links import build_code_url
+from app.services.code_links import build_code_url, guess_repo_type
 from app.services.decisions import DecisionError, create_request
 from app.services.entity_paths import subtree_ids
 from app.services.entity_settings import effective_settings
@@ -67,11 +67,18 @@ async def to_detail(db: AsyncSession, finding: Finding) -> FindingDetail:
     entity = await db.get(Entity, finding.entity_id)
     settings = await effective_settings(db, entity)
     imp = await db.get(Import, finding.import_id) if finding.import_id else None
-    repo_url = (imp.repo_url if imp else None) or settings["repo_url"]["value"]
-    repo_type_value = settings["repo_type"]["value"]
+    project_repo_url = settings["repo_url"]["value"]
+    if project_repo_url:
+        # Проект сам знает свой репозиторий — SARIF repositoryUri сканера не учитываем.
+        repo_url = project_repo_url
+        repo_type = RepoType(settings["repo_type"]["value"]) if settings["repo_type"]["value"] else None
+    else:
+        # У проекта репозиторий не настроен — берём то, что сканер сообщил в отчёте.
+        repo_url = imp.repo_url if imp else None
+        repo_type = guess_repo_type(repo_url) if repo_url else None
     common = dict(
         repo_url=repo_url,
-        repo_type=RepoType(repo_type_value) if repo_type_value else None,
+        repo_type=repo_type,
         path=finding.file_path,
         line=finding.line_start,
         path_prefix=settings["repo_path_prefix"]["value"],
@@ -393,10 +400,11 @@ async def bulk_action(
     if data.action == "assign" and await db.get(UserGroup, data.group_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Команда не найдена")
 
-    found = {f.id: f for f in await db.scalars(select(Finding).where(Finding.id.in_(data.ids)))}
+    ids = list(dict.fromkeys(data.ids))
+    found = {f.id: f for f in await db.scalars(select(Finding).where(Finding.id.in_(ids)))}
     applied = 0
     skipped: list[BulkSkipped] = []
-    for finding_id in data.ids:
+    for finding_id in ids:
         finding = found.get(finding_id)
         if finding is None:
             skipped.append(BulkSkipped(id=finding_id, reason="Уязвимость не найдена"))
@@ -434,6 +442,7 @@ async def bulk_action(
                 },
             )
             finding.assignee_group_id = data.group_id
+            finding.assignee_user_id = None
             finding.assigned_manually = True
         applied += 1
     await db.commit()

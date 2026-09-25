@@ -27,6 +27,8 @@ def build_code_url(
 ) -> str | None:
     if not (repo_url and ref and path):
         return None
+    if urlsplit(repo_url).scheme not in ("http", "https"):
+        return None
     rtype = repo_type or guess_repo_type(repo_url)
     if rtype is None:
         return None

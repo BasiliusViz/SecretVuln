@@ -6,13 +6,13 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Entity, OwnershipRule, RuleSource, UserGroup
 from app.models.entity import RepoType
-from app.services.entity_settings import find_repo_owner, normalize_repo_url
+from app.services.entity_settings import find_repo_owner, is_http_url, normalize_repo_url
 
 MAX_CONFIG_SIZE = 64 * 1024
 
@@ -23,6 +23,13 @@ class RepoSection(BaseModel):
     url: str | None = Field(default=None, max_length=1024)
     type: RepoType | None = None
     path_prefix: str | None = Field(default=None, max_length=512)
+
+    @field_validator("url")
+    @classmethod
+    def _url_is_http(cls, value: str | None) -> str | None:
+        if value is not None and not is_http_url(value):
+            raise ValueError("допускаются только ссылки http:// или https://")
+        return value
 
 
 class OwnershipEntry(BaseModel):
