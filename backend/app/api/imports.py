@@ -1,3 +1,4 @@
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -10,7 +11,7 @@ from app.db.session import get_db
 from app.models import Entity, Import
 from app.models.import_ import ImportStatus
 from app.schemas.import_ import CreatedEntity, ImportCreated, ImportRead
-from app.services.config_file import ConfigError, ProjectConfig, apply_config, parse_config
+from app.services.config_file import MAX_CONFIG_SIZE, ConfigError, ProjectConfig, apply_config, parse_config
 from app.services.entity_paths import ensure_path
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
 from app.services.storage import save_sarif
@@ -20,11 +21,28 @@ router = APIRouter(prefix="/api/v1", tags=["imports"])
 MAX_SARIF_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
+def _derive_branch(content: bytes) -> str | None:
+    """Лёгкий разбор SARIF ради versionControlProvenance[0].branch. Невалидный JSON —
+    просто пропускаем (полный разбор и отчёт об ошибке — задача воркера)."""
+    try:
+        data = json.loads(content)
+        runs = data.get("runs") or []
+        if not runs:
+            return None
+        vcp = (runs[0].get("versionControlProvenance") or [{}])[0]
+        branch = vcp.get("branch")
+        return branch or None
+    except (ValueError, AttributeError, TypeError, IndexError):
+        return None
+
+
 async def _read_config(config: UploadFile | None) -> ProjectConfig | None:
     if config is None:
         return None
     try:
-        return parse_config(await config.read())
+        # На один байт больше лимита достаточно, чтобы parse_config признал файл слишком
+        # большим — не читаем произвольно огромную загрузку целиком ради этой проверки.
+        return parse_config(await config.read(MAX_CONFIG_SIZE + 1))
     except ConfigError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
 
@@ -44,6 +62,10 @@ async def _create_import(
     close_missing: bool,
     confirm_empty: bool,
 ) -> ImportCreated:
+    content = await file.read()
+    if len(content) > MAX_SARIF_SIZE:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large (max 50 MB)")
+
     warnings: list[str] = []
     if config is not None:
         if not has_permission(principal, "entity", "write"):
@@ -54,16 +76,15 @@ async def _create_import(
         warnings = await apply_config(db, entity, config, commit_sha=commit_sha or None)
 
     branch = branch or None
+    # Ветка формы не задана — проверяем по ветке из SARIF-provenance, чтобы не закоммитить
+    # конфиг, который повторный скан воркера всё равно отклонит.
+    branch_for_check = branch or _derive_branch(content)
     default_branch = await resolve_default_branch(db, entity.id)
-    if not branch_allowed(branch, default_branch):
+    if not branch_allowed(branch_for_check, default_branch):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            branch_rejection_message(branch, default_branch),
+            branch_rejection_message(branch_for_check, default_branch),
         )
-
-    content = await file.read()
-    if len(content) > MAX_SARIF_SIZE:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large (max 50 MB)")
 
     filename = file.filename or "upload.sarif"
     storage_key = save_sarif(content, filename)

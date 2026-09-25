@@ -1,9 +1,14 @@
 """POST /imports: адрес проекта путём, автосоздание, файл настроек."""
 
+from unittest.mock import AsyncMock
+
+import pytest
 from sqlalchemy import func, select
 
+from app.api.imports import _read_config
 from app.authz.enforcer import set_role_permissions
 from app.models import Import
+from app.services.config_file import MAX_CONFIG_SIZE
 from tests.factories import make_entity, make_group, make_sarif
 
 SARIF = make_sarif("Semgrep", [{"fp": "a"}])
@@ -122,19 +127,84 @@ async def test_config_branch_applies_before_branch_check(client, admin):
     assert "main" in r.json()["detail"]
 
 
-async def test_auto_create_conflict_409(client, admin, db):
+async def test_auto_create_name_conflict_gets_unique_name(client, admin, db):
     _, h = admin
     # Корневой узел с тем же именем, что первый сегмент пути, но другим slug —
-    # ensure_path(create=False) его не находит (path_cache не совпадает),
-    # а ensure_path(create=True) падает на уникальности (parent_id, name).
+    # ensure_path(create=False) его не находит (path_cache не совпадает); ensure_path(create=True)
+    # больше не падает на уникальности (parent_id, name) — подбирает уникальное имя «fintech-2».
     await make_entity(db, "fintech", slug="fintech-old")
     r = await client.post(
         "/api/v1/imports",
         data={"project_path": "fintech/x", "auto_create": "true"},
         files=_files(), headers=h,
     )
+    assert r.status_code == 201, r.text
+    assert r.json()["created_entities"][0]["path"] == "fintech"
+
+    created = (await client.get("/api/v1/entities/by-path/fintech", headers=h)).json()
+    assert created["name"] == "fintech-2"
+
+
+async def test_auto_create_genuine_name_race_still_409s(client, admin, db, monkeypatch):
+    """Настоящая гонка (concurrent insert обходит проверку уникальности) — IntegrityError
+    по uq_entities_parent_name должен вернуть 409, а не 500."""
+    import app.services.entity_paths as entity_paths_mod
+
+    _, h = admin
+    await make_entity(db, "fintech")
+
+    async def _fake_unique_name(*_args, **_kwargs):
+        return "fintech"
+
+    monkeypatch.setattr(entity_paths_mod, "unique_name", _fake_unique_name)
+    r = await client.post(
+        "/api/v1/imports",
+        data={"project_path": "other-root/x", "auto_create": "true"},
+        files=_files(), headers=h,
+    )
     assert r.status_code == 409, r.text
     assert await db.scalar(select(func.count()).select_from(Import)) == 0
+
+
+async def test_config_branch_checked_against_sarif_provenance_when_form_branch_empty(
+    client, admin, db
+):
+    """Форма branch пустая, но SARIF содержит provenance-ветку, отличную от default_branch
+    из конфига — импорт должен быть отклонён ДО применения конфига к проекту (422),
+    Import не создаётся, настройки проекта не меняются."""
+    _, h = admin
+    entity = await make_entity(db, "svc", repo_url="https://gitlab.corp/old/repo")
+    sarif = make_sarif(
+        "Semgrep", [{"fp": "a"}], provenance={"branch": "feature", "revisionId": "abc"}
+    )
+    r = await client.post(
+        "/api/v1/imports",
+        data={"project_path": "svc"},
+        files={
+            "file": ("s.sarif", sarif, "application/json"),
+            "config": (".secretvuln.yml", b"version: 1\ndefault_branch: main\n", "application/x-yaml"),
+        },
+        headers=h,
+    )
+    assert r.status_code == 422, r.text
+    assert "main" in r.json()["detail"]
+    assert await db.scalar(select(func.count()).select_from(Import)) == 0
+
+    await db.refresh(entity)
+    assert entity.default_branch is None
+    assert entity.repo_url == "https://gitlab.corp/old/repo"
+
+
+async def test_read_config_bounds_the_read_size():
+    """Не читаем весь файл целиком ради проверки размера — максимум MAX_CONFIG_SIZE + 1 байт."""
+    fake = AsyncMock()
+    fake.read = AsyncMock(return_value=b"x" * (MAX_CONFIG_SIZE + 1))
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await _read_config(fake)
+    assert exc.value.status_code == 422
+    fake.read.assert_awaited_once_with(MAX_CONFIG_SIZE + 1)
 
 
 async def test_legacy_endpoint_accepts_config(client, admin, db):
