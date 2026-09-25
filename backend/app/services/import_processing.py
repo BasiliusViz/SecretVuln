@@ -9,20 +9,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.finding import Finding, FindingStatus
+from app.models.finding import OPEN_STATUSES, Finding, FindingStatus
 from app.models.finding_event import FindingEventType
 from app.models.import_ import Import
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
 from app.services.events import record_event
+from app.services.ownership import build_resolver, reassign_entity
 from app.services.sarif import SarifRun, get_normalizer
-
-# Статусы, которые автозакрытие переводит в fixed. Решения людей (ложное/риск) не трогаем.
-OPEN_STATUSES: tuple[FindingStatus, ...] = (
-    FindingStatus.new,
-    FindingStatus.triaged,
-    FindingStatus.confirmed,
-    FindingStatus.in_progress,
-)
 
 
 class ImportRejected(Exception):
@@ -33,6 +26,7 @@ def _apply_provenance(imp: Import, runs: list[SarifRun]) -> None:
     for run in runs:
         imp.branch = imp.branch or run.branch
         imp.commit_sha = imp.commit_sha or run.revision
+        imp.repo_url = imp.repo_url or run.repository_uri
 
 
 async def _close_missing(
@@ -79,6 +73,8 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
     if not branch_allowed(imp.branch, default_branch):
         raise ImportRejected(branch_rejection_message(imp.branch, default_branch))
 
+    resolver = await build_resolver(db, imp.entity_id)
+
     created = updated = duplicates = total_results = 0
     scanner_name: str | None = None
     now = datetime.now(timezone.utc)
@@ -106,6 +102,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                 existing.raw = result.raw
                 existing.scan_scope = imp.scan_scope
                 existing.commit_sha = imp.commit_sha
+                existing.help_text = result.help
                 if existing.status == FindingStatus.fixed:
                     existing.status = FindingStatus.new
                     record_event(
@@ -119,6 +116,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
             else:
                 # id задаём явно, чтобы сразу сослаться на находку из события
                 finding_id = uuid.uuid4()
+                assignee_group_id = resolver.resolve(result.file_path)
                 db.add(
                     Finding(
                         id=finding_id,
@@ -138,11 +136,17 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                         scan_scope=imp.scan_scope,
                         commit_sha=imp.commit_sha,
                         raw=result.raw,
+                        help_text=result.help,
+                        assignee_group_id=assignee_group_id,
                     )
                 )
                 record_event(
                     db, finding_id, FindingEventType.imported,
-                    to_status=FindingStatus.new, payload={"import_id": str(imp.id)},
+                    to_status=FindingStatus.new,
+                    payload={
+                        "import_id": str(imp.id),
+                        "assignee_group_id": str(assignee_group_id) if assignee_group_id else None,
+                    },
                 )
                 created += 1
 
@@ -153,6 +157,8 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
         closed, warnings = await _close_missing(db, imp, seen)
         await db.flush()
 
+    reassigned = await reassign_entity(db, imp.entity_id)
+
     imp.scanner = scanner_name
     stats: dict[str, Any] = {
         "created": created,
@@ -160,6 +166,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
         "duplicates": duplicates,
         "total_results": total_results,
         "closed": closed,
+        "reassigned": reassigned,
     }
     if warnings:
         stats["warnings"] = warnings

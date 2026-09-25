@@ -6,13 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, has_permission, require_permission
 from app.db.session import get_db
-from app.models import Entity, Finding
+from app.models import Entity, Finding, User, UserGroup
 from app.models.finding import FindingStatus, Severity
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
-from app.schemas.finding import FindingRead, FindingStatusUpdate
+from app.schemas.finding import FindingAssign, FindingRead, FindingStatusUpdate
 from app.schemas.finding_event import FindingEventRead
 from app.services.entity_paths import subtree_ids
 from app.services.events import record_event
+from app.services.ownership import build_resolver
 
 router = APIRouter(prefix="/api/v1", tags=["findings"])
 
@@ -25,6 +26,13 @@ async def _entity_filter(db: AsyncSession, entity_id: uuid.UUID, include_descend
     if entity is None:
         return Finding.entity_id == entity_id  # пустой результат
     return Finding.entity_id.in_(subtree_ids(entity))
+
+
+async def load_finding(db: AsyncSession, finding_id: uuid.UUID) -> Finding:
+    """Перечитать находку вместе с командой/исполнителем (selectin) — для ответа после изменений."""
+    return await db.scalar(
+        select(Finding).where(Finding.id == finding_id).execution_options(populate_existing=True)
+    )
 
 
 @router.get("/findings", response_model=list[FindingRead])
@@ -159,5 +167,43 @@ async def update_finding_status(
             reason=(data.reason or "").strip() or None,
         )
         await db.commit()
-        await db.refresh(finding)
-    return finding
+    return await load_finding(db, finding.id)
+
+
+@router.post("/findings/{finding_id}/assign", response_model=FindingRead)
+async def assign_finding(
+    finding_id: uuid.UUID,
+    data: FindingAssign,
+    principal: Principal = Depends(require_permission("finding", "triage")),
+    db: AsyncSession = Depends(get_db),
+) -> Finding:
+    finding = await db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+
+    if data.by_rules:
+        new_group = (await build_resolver(db, finding.entity_id)).resolve(finding.file_path)
+        finding.assigned_manually = False
+        finding.assignee_user_id = None
+    else:
+        if data.group_id is not None and await db.get(UserGroup, data.group_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Команда не найдена")
+        if data.user_id is not None and await db.get(User, data.user_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Пользователь не найден")
+        new_group = data.group_id
+        finding.assigned_manually = True
+        finding.assignee_user_id = data.user_id
+
+    record_event(
+        db, finding.id, FindingEventType.assigned,
+        actor_type=ActorType.user, actor_id=principal.user.id,
+        payload={
+            "from_group_id": str(finding.assignee_group_id) if finding.assignee_group_id else None,
+            "to_group_id": str(new_group) if new_group else None,
+            "user_id": str(data.user_id) if data.user_id and not data.by_rules else None,
+            "by_rules": data.by_rules,
+        },
+    )
+    finding.assignee_group_id = new_group
+    await db.commit()
+    return await load_finding(db, finding.id)

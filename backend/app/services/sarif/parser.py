@@ -20,6 +20,7 @@ class SarifResult:
     fingerprint: str
     cwe: str | None
     raw: dict[str, Any]
+    help: str | None = None
 
 
 @dataclass
@@ -65,6 +66,13 @@ def _compute_fingerprint(result: dict[str, Any], rule_id: str | None, file_path:
 
     raw = f"{rule_id or ''}|{file_path or ''}|{snippet}"
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _rule_help(rule: dict[str, Any] | None) -> str | None:
+    if not rule:
+        return None
+    help_ = rule.get("help") or {}
+    return help_.get("markdown") or help_.get("text")
 
 
 def _build_rules_map(run: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -133,6 +141,7 @@ def parse_sarif(content: bytes) -> list[SarifRun]:
                 fingerprint=fingerprint,
                 cwe=cwe,
                 raw=result,
+                help=_rule_help(rule),
             ))
 
         runs.append(sarif_run)

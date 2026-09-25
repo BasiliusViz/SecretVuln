@@ -40,6 +40,16 @@ class FindingStatus(str, enum.Enum):
     fixed = "fixed"
 
 
+# Открытые статусы: участвуют в автозакрытии и переназначении владельца.
+# Решения людей (ложное/риск) и fixed не трогаем.
+OPEN_STATUSES: tuple[FindingStatus, ...] = (
+    FindingStatus.new,
+    FindingStatus.triaged,
+    FindingStatus.confirmed,
+    FindingStatus.in_progress,
+)
+
+
 class Finding(Base, UUIDPKMixin, TimestampMixin):
     """A normalized security finding parsed from a SARIF result.
 

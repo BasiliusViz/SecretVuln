@@ -11,7 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_permission
+from app.api.deps import Principal, require_permission
 from app.db.session import get_db
 from app.models import Entity, OwnershipRule, RuleSource, UserGroup
 from app.schemas.entity_settings import (
@@ -23,6 +23,7 @@ from app.schemas.entity_settings import (
     UnpinRequest,
 )
 from app.services.config_file import apply_stored_config, export_config
+from app.services.entity_paths import subtree_ids
 from app.services.entity_settings import (
     FIELD_PIN,
     effective_settings,
@@ -31,6 +32,7 @@ from app.services.entity_settings import (
     normalize_repo_url,
     own_source,
 )
+from app.services.ownership import reassign_entity
 
 router = APIRouter(prefix="/api/v1/entities", tags=["entity-settings"])
 
@@ -183,3 +185,18 @@ async def download_config(
         media_type="application/yaml; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename=".secretvuln.yml"'},
     )
+
+
+@router.post("/{entity_id}/reassign")
+async def reassign_subtree(
+    entity_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("entity", "write")),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """«Переназначить по правилам»: применить правила к открытым уязвимостям поддерева сейчас."""
+    entity = await _entity_or_404(db, entity_id)
+    total = 0
+    for node_id in list(await db.scalars(subtree_ids(entity))):
+        total += await reassign_entity(db, node_id, actor_id=principal.user.id)
+    await db.commit()
+    return {"reassigned": total}
