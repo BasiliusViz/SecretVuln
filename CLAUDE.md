@@ -8,7 +8,7 @@ Vulnerability management платформа: импорт находок без�
 - **Фоновые задачи**: Redis + ARQ (обработка SARIF-импортов в воркере)
 - **Авторизация**: Casbin (pycasbin + casbin-sqlalchemy-adapter) — роли настраиваются из админки, не хардкод
 - **Аутентификация**: локальная (email/password + JWT, passlib/bcrypt, pyjwt) и LDAP (ldap3: bind, auto-provisioning, маппинг групп на роли)
-- **Файлы**: загруженные SARIF — на диске (`SV_STORAGE_PATH`, по умолчанию `backend/data/sarif`) или в S3/MinIO при `SV_STORAGE_BACKEND=s3` (`app/services/storage.py`). MinIO в docker-compose — профиль `s3`, S3 API на порту 9002 (localhost:9000 перехватывает wslrelay.exe)
+- **Файлы**: загруженные SARIF — на диске (`SV_STORAGE_PATH`, по умолчанию `backend/data/sarif`, **путь относительный — API и воркер обязательно запускать из `backend/`**) или в S3/MinIO при `SV_STORAGE_BACKEND=s3` (`app/services/storage.py`). MinIO в docker-compose — профиль `s3`, S3 API на порту 9002 (localhost:9000 перехватывает wslrelay.exe)
 - **Frontend**: React 19 + TypeScript (Vite 7), react-router 7, react-i18next, Recharts. Dev-сервер проксирует /api на :8000 (vite.config.ts)
 - **Деплой**: docker-compose (dev), Helm chart (K8s, ещё не реализован — deploy/helm/README.md)
 
@@ -23,7 +23,7 @@ backend/
     models/            # SQLAlchemy 2.0 модели (Mapped/mapped_column)
     schemas/           # Pydantic-схемы (Create/Update/Read)
     api/               # роутеры: entities (CRUD + дерево), imports (upload + список), findings (фильтры + stats)
-    services/          # s3.py (MinIO), sarif/ (parser + normalizers)
+    services/          # storage.py (диск/S3), sarif/ (parser + normalizers)
     worker.py          # ARQ-воркер: process_import
   migrations/          # Alembic; 0001–0003 написаны вручную (0003: products -> entities)
   pyproject.toml
@@ -44,7 +44,7 @@ docker-compose.yml     # postgres:16, redis:7, minio (+minio-init создаёт
 
 - **User**: email (unique), hashed_password (NULL для LDAP-пользователей), auth_source enum(local|ldap), ldap_dn, is_superuser
 - **Entity** (таблица `entities`): name (unique среди сиблингов: uq_entities_parent_name с NULLS NOT DISTINCT), parent_id (self-FK, ON DELETE CASCADE — удаление сносит поддерево с импортами и находками), description, **custom_fields JSONB**. API `/api/v1/entities` отдаёт плоский список, дерево собирает фронтенд; PATCH parent_id защищён от циклов (`_check_parent` в app/api/entities.py). `slug` (адрес узла, `[a-z0-9._-]`, уникален среди соседей) и `path_cache` (полный путь `fintech/payments/api`, пересчитывается в `app/services/entity_paths.py`); наследуемые настройки `owner_group_id`, `repo_url` (уникален), `repo_type`, `repo_path_prefix`, `default_branch`; `pinned_fields`, `config_file`. Таблица `ownership_rules` (маска → команда, `source` file|manual).
-- **Import**: одна загрузка SARIF-файла в конкретный Entity (entity_id). filename, s3_key, scanner (определяется воркером из tool.driver.name), status enum(pending|processing|done|failed), stats JSONB ({"created","updated","duplicates"}), error, finished_at
+- **Import**: одна загрузка SARIF-файла в конкретный Entity (entity_id). filename, storage_key, scanner (определяется воркером из tool.driver.name), status enum(pending|processing|done|failed), stats JSONB ({"created","updated","duplicates"}), error, finished_at
 - **Finding**: нормализованная находка, привязана к Entity (entity_id). severity enum(critical|high|medium|low|info), status enum(new|triaged|confirmed|false_positive|risk_accepted|fixed), scanner, rule_id, cwe, file_path, line_start/end, **fingerprint** (дедуп-ключ), raw JSONB (исходный SARIF result — источник правды для ре-нормализации), first_seen/last_seen. Уникальность: `(entity_id, fingerprint)` — область дедупа = узел, куда идут импорты; одинаковая уязвимость в соседних узлах = две находки
 - **Role**: только метаданные для админки (name, description, ldap_group, is_builtin). Сами права и назначения user->role живут в таблице `casbin_rule` (создаётся адаптером Casbin автоматически, НЕ в наших миграциях). `Role.name` должен совпадать с subject в Casbin-политиках
 
@@ -58,14 +58,14 @@ docker-compose.yml     # postgres:16, redis:7, minio (+minio-init создаёт
 
 ## Пайплайн импорта (РЕАЛИЗОВАН, протестирован end-to-end)
 
-1. `POST /api/v1/entities/{id}/imports` (multipart, поле `file`) → файл в S3 (`app/services/s3.py`), запись Import(pending), ARQ job `process_import` в Redis
+1. `POST /api/v1/entities/{id}/imports` (multipart, поле `file`) → файл в хранилище (`app/services/storage.py`, диск или S3 — см. «Файлы» в Стеке), запись Import(pending), ARQ job `process_import` в Redis
 2. Воркер (`app/worker.py`, запуск: `python -m arq app.worker.WorkerSettings`): скачивает из S3 → парсит SARIF (`app/services/sarif/parser.py`) → определяет сканер по `runs[].tool.driver.name` → нормализует severity (`app/services/sarif/normalizers.py`) → дедуп по fingerprint → пишет findings, обновляет Import.stats/status. Если ре-импорт видит находку в статусе fixed — переоткрывает в new (счётчик updated)
 
 **Процесс (этап 1, спека docs/superpowers/specs/2026-09-19-triage-workflow-and-ai-design.md):** логика импорта — `app/services/import_processing.py` (`apply_import`), воркер только скачивает и вызывает её. Импорт принимает `branch`, `commit_sha`, `pipeline_url`, `scan_scope`, `close_missing` (по умолчанию true), `confirm_empty`; ветка/коммит также берутся из SARIF `versionControlProvenance`. У актива `default_branch` (наследуется вниз, `app/services/entity_tree.py`) — импорт другой ветки отклоняется. **Автозакрытие**: открытые находки объёма `(актив, сканер, scan_scope)`, которых нет в новом отчёте, → `fixed` (пустой отчёт закрывает только с `confirm_empty`). История — `finding_events` (`app/services/events.py`, `GET /findings/{id}/events`). Номера `findings.number` → `SV-N` (`GET /findings/by-number/{n}`). Статус `in_progress`; `PATCH /findings/{id}` принимает JSON `{status, reason}` и только new/triaged/confirmed/in_progress. «Ложное»/«риск» — `decision_requests` (`POST /findings/{id}/decisions`, `POST /decisions/{id}/approve|reject`): разработчик запрашивает, право `finding:approve` одобряет (у кого оно есть — применяется сразу). Риск принимается со сроком; ARQ cron `expire_risks` (03:00) переоткрывает истёкшие. Встроенная роль «Разработчик».
 
 Нормализаторы: Semgrep, Trivy, Gitleaks (всегда high/critical — секреты), Checkov + Default (level→severity: error=high, warning=medium, note=low). Реестр `_REGISTRY` в normalizers.py, матчинг по подстроке имени драйвера.
 
-API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/entities/{id}/imports`, `GET /api/v1/findings` (фильтры: entity_id, severity, status, scanner, limit/offset), `GET /api/v1/findings/stats` (total + by_severity + by_status), `PATCH /api/v1/findings/{id}?status=...`
+API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/entities/{id}/imports`, `GET /api/v1/findings` (фильтры: entity_id, severity, status, scanner, limit/offset), `GET /api/v1/findings/stats` (total + by_severity + by_status), `PATCH /api/v1/findings/{id}` (JSON-тело `{status, reason}`)
 
 ## Владельцы и окна (этап 2 — РЕАЛИЗОВАН)
 
@@ -75,7 +75,7 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - **Файл настроек `.secretvuln.yml`** (`app/services/config_file.py`): CI прикладывает полем `config`; битый файл → 422; неизвестная группа → предупреждение в `imports.config_warnings`. Правка поля в админке закрепляет его (`pinned_fields`), файл его больше не перезаписывает; `POST /entities/{id}/settings/unpin` — «Вернуть к файлу»; `GET /entities/{id}/config.yml` — выгрузка. Применение файла требует `entity:write`.
 - **Настройки**: `GET/PATCH /entities/{id}/settings` (значение + источник manual/file/inherited/unset), `PUT /entities/{id}/ownership-rules`, `POST /entities/{id}/reassign`.
 - **Владелец уязвимости** (`app/services/ownership.py`): правила узла → правила предков → владелец проекта → «Без владельца». Считается при импорте для новых и открытых незакреплённых (`assigned_manually=false`); `POST /findings/{id}/assign` (группа/человек или `by_rules`).
-- **Карточка** `GET /findings/{id}` и `/by-number/{n}` — `FindingDetail` с `entity_path`, `code_url` (коммит), `code_url_head` (основная ветка), `help_text` (SARIF rule.help). Шаблоны ссылок — `app/services/code_links.py`.
+- **Карточка** `GET /findings/{id}` и `/by-number/{n}` — `FindingDetail` с `entity_path`, `code_url` (коммит), `code_url_head` (основная ветка), `help_text` (SARIF rule.help). Шаблоны ссылок — `app/services/code_links.py`. **Ссылка на код**: свой `repo_url` проекта (унаследованный или свой) всегда в приоритете; SARIF `repositoryUri` из отчёта сканера (`Import.repo_url`) используется, только если у проекта репозитория нет — тогда `repo_type` угадывается по этому URL (`guess_repo_type`), а не берётся из настроек проекта. В обоих случаях URL принимается только со схемой `http(s)` — иначе ссылка не строится (`build_code_url` возвращает `None`); то же ограничение — на `repo_url` в `PATCH /entities/{id}/settings` и в `repo.url` файла `.secretvuln.yml` (422 при нарушении).
 - **Совместная работа**: `POST /findings/{id}/comments`, `POST /findings/{id}/help` (флаг `help_requested_at`, снимает AppSec комментарием с `resolve_help`), `POST /findings/bulk` (confirm/false_positive/assign), `GET /decisions?mine=true`. `/auth/me` отдаёт `permissions`, фронтенд проверяет их через `useCan()`.
 - **Фильтры `/findings`**: `status` (повторяемый), `mine`, `unassigned`, `assignee_group_id`, `help_requested`, `pending_decision`, `order=last_seen|severity|number`.
 - **Экраны**: окно уязвимости `/f/SV-N` (`FindingWindow.tsx`), очередь AppSec `/inbox` (только с `finding:approve`, горячие клавиши J/K/X/C/F/A/Enter), «Мои уязвимости» `/my`, настройки проекта `/projects/:id/settings`; общий клиент `src/api/json.ts`, типы `src/api/types.ts`.
@@ -150,7 +150,7 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 | `services/decisions.py` | Создание, одобрение, отклонение запросов |
 | `services/risk_expiry.py` | Истечение принятого риска |
 | `services/sarif/` | `parser.py` (разбор + `versionControlProvenance`), `normalizers.py` (severity по сканерам) |
-| `services/s3.py` | MinIO/S3 |
+| `services/storage.py` | Хранилище SARIF: диск или S3/MinIO по `SV_STORAGE_BACKEND` |
 | `worker.py` | ARQ: `process_import`, cron `expire_risks` |
 | `cli.py` | `create-admin`, `seed-roles` (там же список встроенных ролей) |
 | `tests/conftest.py`, `tests/factories.py` | Тестовая БД, фикстуры пользователей и клиента, фабрики данных |
