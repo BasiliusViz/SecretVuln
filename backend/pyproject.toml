@@ -41,5 +41,7 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Короткий вывод: точки + только упавшие тесты (экономит контекст агента)
+addopts = "-q --tb=short -p no:warnings"
 testpaths = ["tests"]
 pythonpath = ["."]

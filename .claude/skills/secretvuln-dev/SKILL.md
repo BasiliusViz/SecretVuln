@@ -77,6 +77,7 @@ cd backend; .\.venv\Scripts\python -m pytest -q
 
 ## Документы
 
+- Подсистемы подробно (модель данных, импорт, владельцы, auth/LDAP, группы, Casbin): `docs/architecture.md`
 - Спека процесса и ИИ-слоя: `docs/superpowers/specs/2026-09-19-triage-workflow-and-ai-design.md`
-- План этапа 1 (выполнен): `docs/superpowers/plans/2026-09-19-stage1-process-core.md`
+- Этапы 1 и 2 (выполнены): спеки и планы в `docs/superpowers/specs/` и `docs/superpowers/plans/`
 - Исследования: `docs/proposals/` (процесс разбора, хранилище для ИИ, универсальное дерево и API)
