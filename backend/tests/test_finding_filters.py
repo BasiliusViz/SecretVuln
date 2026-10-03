@@ -56,3 +56,32 @@ async def test_pending_decision_filter(client, developer, db):
     )
     assert r.status_code == 201
     assert await _numbers(client, h, "pending_decision=true") == ["asked"]
+
+
+async def test_overdue_tag_filters_and_due_order(client, developer, db):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.finding import FindingStatus
+    from tests.factories import make_entity, make_finding
+
+    _, headers = developer
+    now = datetime.now(timezone.utc)
+    prod = await make_entity(db, "prod", tags=["env:prod"])
+    svc = await make_entity(db, "svc", parent_id=prod.id)
+    other = await make_entity(db, "other")
+    late = await make_finding(db, svc, "late", due_at=now - timedelta(days=1))
+    await make_finding(db, svc, "late-closed", due_at=now - timedelta(days=1), status=FindingStatus.fixed)
+    soon = await make_finding(db, other, "soon", due_at=now + timedelta(days=1))
+    nodue = await make_finding(db, other, "nodue")
+
+    r = await client.get("/api/v1/findings", params={"overdue": "true"}, headers=headers)
+    assert [f["id"] for f in r.json()] == [str(late.id)]
+    assert r.json()[0]["due_at"] is not None and "resolved_at" in r.json()[0]
+
+    r = await client.get("/api/v1/findings", params={"tag": "ENV:prod"}, headers=headers)
+    assert {f["fingerprint"] for f in r.json()} == {"late", "late-closed"}
+
+    r = await client.get(
+        "/api/v1/findings", params={"order": "due_at", "status": "new"}, headers=headers
+    )
+    assert [f["id"] for f in r.json()] == [str(late.id), str(soon.id), str(nodue.id)]

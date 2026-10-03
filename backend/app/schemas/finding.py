@@ -52,6 +52,9 @@ class FindingRead(BaseModel):
     first_seen: datetime
     last_seen: datetime
     created_at: datetime
+    sla_start_at: datetime | None = None
+    due_at: datetime | None = None
+    resolved_at: datetime | None = None
 
 
 class FindingStatusUpdate(BaseModel):

@@ -7,14 +7,16 @@ from collections.abc import Sequence
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, require_permission
 from app.db.session import get_db
-from app.models import Entity, OwnershipRule, RuleSource, UserGroup
+from app.models import Entity, OwnershipRule, RuleSource, SlaPolicy, UserGroup
 from app.schemas.entity_settings import (
+    EffectiveSlaRead,
+    EffectiveTag,
     EntitySettingsRead,
     EntitySettingsUpdate,
     InheritedRule,
@@ -33,9 +35,12 @@ from app.services.entity_settings import (
     normalize_repo_url,
     own_source,
 )
+from app.services.entity_tree import effective_sla, effective_tags, normalize_tags
+from app.services.finding_state import recompute_due
 from app.services.ownership import reassign_entity
 
 router = APIRouter(prefix="/api/v1/entities", tags=["entity-settings"])
+tags_router = APIRouter(prefix="/api/v1", tags=["entity-settings"])
 
 
 async def _entity_or_404(db: AsyncSession, entity_id: uuid.UUID) -> Entity:
@@ -65,6 +70,8 @@ async def settings_read(
                 entity_path=node.path_cache, pattern=rule.pattern,
                 group_id=rule.group_id, group_name=rule.group.name,
             ))
+    eff = (await effective_sla(db, [entity]))[entity.id]
+    policy = await db.get(SlaPolicy, eff.policy_id) if eff.policy_id else None
     return EntitySettingsRead(
         entity_id=entity.id,
         path=entity.path_cache,
@@ -83,6 +90,15 @@ async def settings_read(
         config_commit_sha=entity.config_commit_sha,
         config_applied_at=entity.config_applied_at,
         warnings=list(warnings),
+        sla=EffectiveSlaRead(
+            policy_id=eff.policy_id,
+            policy_name=policy.name if policy else None,
+            own=entity.sla_policy_id is not None,
+            inherited_from=eff.inherited_from,
+            is_default=eff.is_default,
+        ),
+        tags=list(entity.tags),
+        effective_tags=[EffectiveTag(**t) for t in await effective_tags(db, entity)],
     )
 
 
@@ -109,6 +125,19 @@ async def update_settings(
     entity = await _entity_or_404(db, entity_id)
     fields = data.model_dump(exclude_unset=True)
 
+    # Политика и теги не входят в .secretvuln.yml — не закрепляются
+    sla_changed = "sla_policy_id" in fields and fields["sla_policy_id"] != entity.sla_policy_id
+    if "sla_policy_id" in fields:
+        policy_id = fields.pop("sla_policy_id")
+        if policy_id is not None and await db.get(SlaPolicy, policy_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Политика SLA не найдена")
+        entity.sla_policy_id = policy_id
+    if "tags" in fields:
+        try:
+            entity.tags = normalize_tags(fields.pop("tags") or [])
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+
     group_id = fields.get("owner_group_id")
     if group_id is not None and await db.get(UserGroup, group_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Команда не найдена")
@@ -132,6 +161,9 @@ async def update_settings(
     for key, value in fields.items():
         setattr(entity, key, value)
     _pin(entity, *(FIELD_PIN[key] for key in fields))
+    if sla_changed:
+        await db.flush()
+        await recompute_due(db, entity_ids=list(await db.scalars(subtree_ids(entity))))
     try:
         await db.commit()
     except IntegrityError:
@@ -206,3 +238,14 @@ async def reassign_subtree(
         total += await reassign_entity(db, node_id, actor_id=principal.user.id)
     await db.commit()
     return {"reassigned": total}
+
+
+@tags_router.get("/tags", response_model=list[str])
+async def list_tags(
+    _: object = Depends(require_permission("entity", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> list[str]:
+    """Все теги, которые уже есть у проектов, — для подсказок."""
+    tag = func.unnest(Entity.tags).label("tag")
+    sub = select(tag).subquery()
+    return list(await db.scalars(select(sub.c.tag).distinct().order_by(sub.c.tag)))

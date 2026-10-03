@@ -71,3 +71,56 @@ async def test_delete_assigned_policy_conflicts(client, appsec, db):
     assert r.status_code == 409
     listed = (await client.get(URL, headers=headers)).json()
     assert listed[0]["entities_count"] == 1
+
+
+async def test_settings_policy_inheritance_and_subtree_recompute(client, appsec, db):
+    _, headers = appsec
+    await make_policy(db, "def", is_default=True)
+    fast = await make_policy(db, "fast", high=3)
+    root = await make_entity(db, "root")
+    child = await make_entity(db, "child", parent_id=root.id)
+    f = await make_finding(db, child, sla_start_at=T0)
+
+    r = await client.patch(
+        f"/api/v1/entities/{root.id}/settings", json={"sla_policy_id": str(fast.id)}, headers=headers
+    )
+    assert r.status_code == 200 and r.json()["sla"]["own"] is True
+    assert "sla" not in r.json()["pinned_fields"]
+    s = (await client.get(f"/api/v1/entities/{child.id}/settings", headers=headers)).json()
+    assert s["sla"] == {
+        "policy_id": str(fast.id), "policy_name": "fast", "own": False,
+        "inherited_from": "root", "is_default": False,
+    }
+    await db.refresh(f)
+    assert f.due_at == T0 + timedelta(days=3)
+
+    r = await client.patch(
+        f"/api/v1/entities/{root.id}/settings", json={"sla_policy_id": None}, headers=headers
+    )
+    assert r.json()["sla"]["is_default"] is True
+    await db.refresh(f)
+    assert f.due_at == T0 + timedelta(days=30)
+
+
+async def test_settings_tags_validation_and_listing(client, appsec, db):
+    _, headers = appsec
+    root = await make_entity(db, "root")
+    child = await make_entity(db, "child", parent_id=root.id)
+    url = f"/api/v1/entities/{root.id}/settings"
+    r = await client.patch(url, json={"tags": ["Env:Prod", "pci", "pci"]}, headers=headers)
+    assert r.status_code == 200 and r.json()["tags"] == ["env:prod", "pci"]
+    r = await client.patch(url, json={"tags": ["bad tag"]}, headers=headers)
+    assert r.status_code == 422 and "bad tag" in r.json()["detail"]
+    r = await client.patch(url, json={"tags": [f"t{i}" for i in range(21)]}, headers=headers)
+    assert r.status_code == 422
+
+    await client.patch(
+        f"/api/v1/entities/{child.id}/settings", json={"tags": ["team:pay"]}, headers=headers
+    )
+    s = (await client.get(f"/api/v1/entities/{child.id}/settings", headers=headers)).json()
+    assert s["effective_tags"] == [
+        {"tag": "env:prod", "inherited_from": "root"},
+        {"tag": "pci", "inherited_from": "root"},
+        {"tag": "team:pay", "inherited_from": None},
+    ]
+    assert (await client.get("/api/v1/tags", headers=headers)).json() == ["env:prod", "pci", "team:pay"]

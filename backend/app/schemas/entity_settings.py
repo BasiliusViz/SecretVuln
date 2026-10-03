@@ -31,6 +31,20 @@ class InheritedRule(BaseModel):
     group_name: str
 
 
+class EffectiveSlaRead(BaseModel):
+    policy_id: uuid.UUID | None
+    policy_name: str | None
+    # своя политика узла; иначе унаследована (inherited_from) или по умолчанию
+    own: bool
+    inherited_from: str | None
+    is_default: bool
+
+
+class EffectiveTag(BaseModel):
+    tag: str
+    inherited_from: str | None
+
+
 class EntitySettingsRead(BaseModel):
     entity_id: uuid.UUID
     path: str
@@ -43,6 +57,9 @@ class EntitySettingsRead(BaseModel):
     config_commit_sha: str | None
     config_applied_at: datetime | None
     warnings: list[str] = []
+    sla: EffectiveSlaRead
+    tags: list[str]
+    effective_tags: list[EffectiveTag]
 
 
 class EntitySettingsUpdate(BaseModel):
@@ -51,6 +68,9 @@ class EntitySettingsUpdate(BaseModel):
     repo_url: str | None = Field(default=None, max_length=1024)
     repo_type: RepoType | None = None
     repo_path_prefix: str | None = Field(default=None, max_length=512)
+    # NULL — наследовать политику от предка (или по умолчанию)
+    sla_policy_id: uuid.UUID | None = None
+    tags: list[str] | None = Field(default=None, max_length=100)
 
 
 class RuleIn(BaseModel):

@@ -21,7 +21,7 @@ from app.models import (
 )
 from app.models.decision_request import DecisionType
 from app.models.entity import RepoType
-from app.models.finding import FindingStatus, Severity
+from app.models.finding import OPEN_STATUSES, FindingStatus, Severity
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
 from app.schemas.decision import DecisionCreate
 from app.schemas.finding import (
@@ -40,6 +40,7 @@ from app.services.code_links import build_code_url, guess_repo_type
 from app.services.decisions import DecisionError, create_request
 from app.services.entity_paths import subtree_ids
 from app.services.entity_settings import effective_settings
+from app.services.entity_tree import entities_with_tag
 from app.services.events import record_event
 from app.services.finding_state import set_status
 from app.services.ownership import build_resolver
@@ -106,7 +107,9 @@ async def list_findings(
     mine: bool = False,
     help_requested: bool = False,
     pending_decision: bool = False,
-    order: Literal["last_seen", "severity", "number"] = "last_seen",
+    overdue: bool = False,
+    tag: str | None = Query(None, max_length=64),
+    order: Literal["last_seen", "severity", "number", "due_at"] = "last_seen",
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_permission("finding", "read")),
@@ -127,6 +130,10 @@ async def list_findings(
         q = q.where(Finding.assignee_group_id.is_(None))
     if help_requested:
         q = q.where(Finding.help_requested_at.is_not(None))
+    if overdue:
+        q = q.where(Finding.status.in_(OPEN_STATUSES), Finding.due_at < func.now())
+    if tag:
+        q = q.where(Finding.entity_id.in_(entities_with_tag(tag.strip().lower())))
     if pending_decision:
         q = q.where(
             select(DecisionRequest.id)
@@ -148,6 +155,8 @@ async def list_findings(
         q = q.order_by(Finding.severity, Finding.first_seen)
     elif order == "number":
         q = q.order_by(Finding.number.desc())
+    elif order == "due_at":
+        q = q.order_by(Finding.due_at.asc().nulls_last(), Finding.number)
     else:
         q = q.order_by(Finding.last_seen.desc())
     result = await db.scalars(q.offset(offset).limit(limit))

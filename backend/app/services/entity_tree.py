@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -37,6 +38,25 @@ def branch_rejection_message(branch: str, default_branch: str) -> str:
         f"Ветка «{branch}» не основная для актива (основная — «{default_branch}»). "
         "Проверки веток появятся позже"
     )
+
+
+TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]*(:[a-z0-9_./-]+)?$")
+MAX_TAG_LEN = 64
+MAX_TAGS = 20
+
+
+def normalize_tags(raw: list[str]) -> list[str]:
+    """Нижний регистр, без дублей, проверка формата. ValueError — с текстом для пользователя."""
+    tags = list(dict.fromkeys(t.strip().lower() for t in raw if t.strip()))
+    if len(tags) > MAX_TAGS:
+        raise ValueError(f"Не больше {MAX_TAGS} тегов на проект")
+    for tag in tags:
+        if len(tag) > MAX_TAG_LEN or not TAG_RE.match(tag):
+            raise ValueError(
+                f"Некорректный тег «{tag}»: латиница в нижнем регистре, цифры, «_», «.», «-», "
+                f"необязательное значение через «:» (например env:prod), до {MAX_TAG_LEN} символов"
+            )
+    return tags
 
 
 def _prefixes(path: str) -> list[str]:
