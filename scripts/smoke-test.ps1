@@ -147,7 +147,11 @@ $resp = curl.exe -s -X POST "$api/imports" -H $authArg `
     -F "file=@$(Join-Path $samples 'semgrep.sarif')" -F "config=@$cfg" `
     -F "project_path=$projectPath" -F "auto_create=true" -F "branch=main" | ConvertFrom-Json
 if (-not $resp.id) { Fail "импорт по пути не удался: $($resp | ConvertTo-Json -Compress)" }
-if ($resp.created_entities.Count -ne 3) { Fail "ожидали 3 созданных проекта, получили $($resp.created_entities.Count)" }
+# Корень «smoke» мог остаться от прошлых прогонов — новыми обязаны быть run-* и svc
+$createdPaths = @($resp.created_entities.path)
+if ($createdPaths -notcontains $projectPath -or $createdPaths.Count -lt 2) {
+    Fail "ожидали создание $projectPath (минимум 2 новых проекта), получили: $($createdPaths -join ', ')"
+}
 Ok "проекты созданы: $($resp.created_entities.path -join ', ')"
 
 $deadline = (Get-Date).AddSeconds(30)
