@@ -105,3 +105,10 @@ async def recompute_due(db: AsyncSession, *, entity_ids: list[uuid.UUID] | None 
             .values(due_at=due)
             .execution_options(synchronize_session=False)
         )
+
+
+async def recompute_for_policy(db: AsyncSession, policy_id: uuid.UUID) -> None:
+    """Пересчитать сроки во всех проектах, где политика эффективна (своя, унаследованная, default)."""
+    entities = list(await db.scalars(select(Entity)))
+    eff = await effective_sla(db, entities)
+    await recompute_due(db, entity_ids=[eid for eid, e in eff.items() if e.policy_id == policy_id])

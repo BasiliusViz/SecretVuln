@@ -13,10 +13,11 @@ CATALOG: dict[str, list[str]] = {
     "import": ["read", "import", "delete"],
     "group": ["read", "write", "delete"],
     "role": ["read", "write", "delete"],
+    "sla": ["read", "manage"],
 }
 
 RESOURCES: list[str] = list(CATALOG.keys())
-ACTIONS: list[str] = ["read", "write", "delete", "import", "triage", "approve"]
+ACTIONS: list[str] = ["read", "write", "delete", "import", "triage", "approve", "manage"]
 
 
 def is_valid(resource: str, action: str) -> bool:

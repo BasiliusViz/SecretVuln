@@ -55,7 +55,7 @@ async def create_admin(email: str, password: str, full_name: str | None) -> None
 
 
 # Встроенные роли: имя → список (ресурс, действие).
-_R = ["entity", "finding", "import", "group", "role"]
+_R = ["entity", "finding", "import", "group", "role", "sla"]
 BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
     "Наблюдатель": (
         "Только чтение во всех разделах",
@@ -63,7 +63,10 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
     ),
     "Разработчик": (
         "Видит находки, берёт в работу, запрашивает «ложное срабатывание» и принятие риска",
-        [("entity", "read"), ("finding", "read"), ("finding", "triage"), ("import", "read")],
+        [
+            ("entity", "read"), ("finding", "read"), ("finding", "triage"), ("import", "read"),
+            ("sla", "read"),
+        ],
     ),
     "Аудитор": (
         "Чтение везде + разбор находок",
@@ -77,6 +80,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("finding", "triage"), ("finding", "approve"),
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"),
+            ("sla", "read"), ("sla", "manage"),
         ],
     ),
     "Администратор": (
@@ -88,6 +92,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"), ("group", "write"), ("group", "delete"),
             ("role", "read"), ("role", "write"), ("role", "delete"),
+            ("sla", "read"), ("sla", "manage"),
         ],
     ),
 }
