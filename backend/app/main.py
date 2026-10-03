@@ -12,6 +12,7 @@ from app.api.entity_settings import tags_router
 from app.api.findings import router as findings_router
 from app.api.groups import router as groups_router
 from app.api.imports import router as imports_router
+from app.api.metrics import router as metrics_router
 from app.api.roles import router as roles_router
 from app.api.sla_policies import router as sla_policies_router
 from app.core.config import get_settings
@@ -47,6 +48,7 @@ app.include_router(decisions_router)
 app.include_router(groups_router)
 app.include_router(roles_router)
 app.include_router(sla_policies_router)
+app.include_router(metrics_router)
 
 
 @app.get("/api/v1/health", tags=["health"])
