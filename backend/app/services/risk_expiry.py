@@ -11,6 +11,7 @@ from app.models.decision_request import DecisionRequest, DecisionStatus, Decisio
 from app.models.finding import Finding, FindingStatus
 from app.models.finding_event import FindingEventType
 from app.services.events import record_event
+from app.services.finding_state import set_status
 
 
 async def expire_risk_acceptances(db: AsyncSession, now: datetime | None = None) -> int:
@@ -27,7 +28,7 @@ async def expire_risk_acceptances(db: AsyncSession, now: datetime | None = None)
         req.status = DecisionStatus.expired
         finding = await db.get(Finding, req.finding_id)
         if finding is not None and finding.status == FindingStatus.risk_accepted:
-            finding.status = FindingStatus.new
+            await set_status(db, finding, FindingStatus.new, now=now)
             record_event(
                 db, finding.id, FindingEventType.reopened,
                 from_status=FindingStatus.risk_accepted, to_status=FindingStatus.new,

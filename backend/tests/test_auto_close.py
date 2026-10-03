@@ -91,3 +91,24 @@ async def test_in_progress_is_closed(db):
     await db.commit()
     await _import(db, entity, ["a"])
     assert await _status(db, "b") == FindingStatus.fixed
+
+
+async def test_sla_dates_on_import_close_and_reopen(db):
+    from tests.factories import make_policy
+
+    await make_policy(db, "def", is_default=True)
+    entity = await make_entity(db)
+    await _import(db, entity, ["a", "b"])
+    f = await db.scalar(select(Finding).where(Finding.fingerprint == "b"))
+    # level=error → high → 30 дней
+    assert f.sla_start_at is not None and (f.due_at - f.sla_start_at).days == 30
+    first_start = f.sla_start_at
+
+    await _import(db, entity, ["a"])
+    await db.refresh(f)
+    assert f.status == FindingStatus.fixed and f.resolved_at is not None
+
+    await _import(db, entity, ["a", "b"])
+    await db.refresh(f)
+    assert f.status == FindingStatus.new and f.resolved_at is None
+    assert f.sla_start_at > first_start

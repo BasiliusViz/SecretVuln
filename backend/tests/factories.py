@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Entity, Finding, GroupSource, Import, UserGroup
+from app.models import Entity, Finding, GroupSource, Import, SlaPolicy, UserGroup
 from app.models.finding import Severity
 from app.models.import_ import ImportStatus
 from app.services.entity_paths import slugify
@@ -96,3 +96,16 @@ async def make_group(db: AsyncSession, name: str = "team") -> UserGroup:
     await db.commit()
     await db.refresh(group)
     return group
+
+
+async def make_policy(
+    db: AsyncSession, name: str = "Стандартная", *, is_default: bool = False, **days: Any
+) -> SlaPolicy:
+    values = {"critical": 15, "high": 30, "medium": 90, "low": 180, "info": None} | days
+    policy = SlaPolicy(
+        name=name, is_default=is_default, **{f"days_{k}": v for k, v in values.items()}
+    )
+    db.add(policy)
+    await db.commit()
+    await db.refresh(policy)
+    return policy

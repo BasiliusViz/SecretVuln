@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
+from dataclasses import dataclass
 
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from app.models import Entity
+from app.models import Entity, SlaPolicy
 
 
 async def resolve_default_branch(db: AsyncSession, entity_id: uuid.UUID) -> str | None:
@@ -31,4 +36,79 @@ def branch_rejection_message(branch: str, default_branch: str) -> str:
     return (
         f"Ветка «{branch}» не основная для актива (основная — «{default_branch}»). "
         "Проверки веток появятся позже"
+    )
+
+
+def _prefixes(path: str) -> list[str]:
+    """fintech/payments/api → [fintech/payments/api, fintech/payments, fintech]"""
+    parts = path.split("/")
+    return ["/".join(parts[:i]) for i in range(len(parts), 0, -1)]
+
+
+@dataclass
+class EffectiveSla:
+    policy_id: uuid.UUID | None
+    # путь узла, от которого политика унаследована; None — своя или по умолчанию
+    inherited_from: str | None
+    is_default: bool
+
+
+async def default_policy(db: AsyncSession) -> SlaPolicy | None:
+    return await db.scalar(select(SlaPolicy).where(SlaPolicy.is_default.is_(True)))
+
+
+async def _nodes_by_path(db: AsyncSession, entities: Iterable[Entity]) -> dict[str, Entity]:
+    paths = {p for e in entities for p in _prefixes(e.path_cache)}
+    if not paths:
+        return {}
+    rows = await db.scalars(select(Entity).where(Entity.path_cache.in_(paths)))
+    return {e.path_cache: e for e in rows}
+
+
+async def effective_sla(db: AsyncSession, entities: list[Entity]) -> dict[uuid.UUID, EffectiveSla]:
+    """Эффективная политика каждого узла: своя → ближайший предок → по умолчанию."""
+    nodes = await _nodes_by_path(db, entities)
+    default = await default_policy(db)
+    result: dict[uuid.UUID, EffectiveSla] = {}
+    for entity in entities:
+        found = EffectiveSla(default.id if default else None, None, True)
+        for path in _prefixes(entity.path_cache):
+            node = nodes.get(path)
+            if node is not None and node.sla_policy_id is not None:
+                inherited = None if node.id == entity.id else node.path_cache
+                found = EffectiveSla(node.sla_policy_id, inherited, False)
+                break
+        result[entity.id] = found
+    return result
+
+
+async def effective_tags(db: AsyncSession, entity: Entity) -> list[dict[str, str | None]]:
+    """Свои теги и теги предков: [{tag, inherited_from}] (inherited_from=None — свой)."""
+    nodes = await _nodes_by_path(db, [entity])
+    seen: dict[str, str | None] = {}
+    for path in _prefixes(entity.path_cache):
+        node = nodes.get(path)
+        if node is None:
+            continue
+        for tag in node.tags:
+            seen.setdefault(tag, None if node.id == entity.id else node.path_cache)
+    return [{"tag": t, "inherited_from": src} for t, src in sorted(seen.items())]
+
+
+def subtree_condition(column, path: str):
+    """path_cache узла path и всех потомков — без LIKE (в slug бывают «_»)."""
+    return or_(column == path, func.left(column, len(path) + 1) == path + "/")
+
+
+def entities_with_tag(tag: str) -> Select:
+    """id проектов, у которых tag среди эффективных (свой или у предка)."""
+    owner = aliased(Entity)
+    return (
+        select(Entity.id)
+        .join(owner, or_(
+            Entity.id == owner.id,
+            func.left(Entity.path_cache, func.length(owner.path_cache) + 1)
+            == owner.path_cache + "/",
+        ))
+        .where(owner.tags.contains(array([tag])))
     )

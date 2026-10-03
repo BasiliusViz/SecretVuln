@@ -13,6 +13,7 @@ from app.models.finding import Finding, FindingStatus
 from app.models.finding_event import ActorType, FindingEventType
 from app.schemas.decision import DecisionCreate
 from app.services.events import record_event
+from app.services.finding_state import set_status
 
 # Находка в этих статусах уже не нуждается в решении
 CLOSED_STATUSES = (FindingStatus.false_positive, FindingStatus.risk_accepted, FindingStatus.fixed)
@@ -84,8 +85,7 @@ async def approve_request(
     req.decided_by_id = user_id
     req.decided_at = datetime.now(timezone.utc)
     req.decision_comment = comment
-    previous = finding.status
-    finding.status = FindingStatus(req.decision_type.value)
+    previous = await set_status(db, finding, FindingStatus(req.decision_type.value))
     record_event(
         db, finding.id, FindingEventType.request_decided,
         actor_type=ActorType.user, actor_id=user_id,

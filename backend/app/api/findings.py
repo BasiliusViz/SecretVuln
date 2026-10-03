@@ -41,6 +41,7 @@ from app.services.decisions import DecisionError, create_request
 from app.services.entity_paths import subtree_ids
 from app.services.entity_settings import effective_settings
 from app.services.events import record_event
+from app.services.finding_state import set_status
 from app.services.ownership import build_resolver
 
 router = APIRouter(prefix="/api/v1", tags=["findings"])
@@ -254,8 +255,7 @@ async def update_finding_status(
         )
 
     if finding.status != data.status:
-        previous = finding.status
-        finding.status = data.status
+        previous = await set_status(db, finding, data.status)
         record_event(
             db, finding.id, FindingEventType.status_changed,
             actor_type=ActorType.user, actor_id=principal.user.id,
@@ -416,8 +416,7 @@ async def bulk_action(
             if finding.status == FindingStatus.confirmed:
                 skipped.append(BulkSkipped(id=finding_id, reason="Уже подтверждена"))
                 continue
-            previous = finding.status
-            finding.status = FindingStatus.confirmed
+            previous = await set_status(db, finding, FindingStatus.confirmed)
             record_event(
                 db, finding.id, FindingEventType.status_changed,
                 actor_type=ActorType.user, actor_id=principal.user.id,

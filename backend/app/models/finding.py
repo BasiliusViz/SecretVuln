@@ -48,6 +48,11 @@ OPEN_STATUSES: tuple[FindingStatus, ...] = (
     FindingStatus.confirmed,
     FindingStatus.in_progress,
 )
+CLOSED_STATUSES: tuple[FindingStatus, ...] = (
+    FindingStatus.fixed,
+    FindingStatus.false_positive,
+    FindingStatus.risk_accepted,
+)
 
 
 class Finding(Base, UUIDPKMixin, TimestampMixin):
@@ -135,6 +140,11 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
     last_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    # SLA: начало отсчёта (создание или переоткрытие), срок исправления, момент закрытия
+    sla_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     entity = relationship("Entity", back_populates="findings")
     import_ = relationship("Import", back_populates="findings")

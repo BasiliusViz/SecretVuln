@@ -15,6 +15,7 @@ from app.models.import_ import Import
 from app.services.entity_settings import is_http_url, normalize_repo_url
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
 from app.services.events import record_event
+from app.services.finding_state import due_from, policy_for_entity, set_status
 from app.services.ownership import build_resolver, reassign_entity
 from app.services.sarif import SarifRun, get_normalizer
 
@@ -56,8 +57,7 @@ async def _close_missing(
             )
             continue
         for finding in missing:
-            previous = finding.status
-            finding.status = FindingStatus.fixed
+            previous = await set_status(db, finding, FindingStatus.fixed)
             record_event(
                 db, finding.id, FindingEventType.auto_fixed,
                 from_status=previous, to_status=FindingStatus.fixed,
@@ -76,6 +76,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
         raise ImportRejected(branch_rejection_message(imp.branch, default_branch))
 
     resolver = await build_resolver(db, imp.entity_id)
+    policy = await policy_for_entity(db, imp.entity_id)
 
     created = updated = duplicates = total_results = 0
     scanner_name: str | None = None
@@ -106,7 +107,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                 existing.commit_sha = imp.commit_sha
                 existing.help_text = result.help
                 if existing.status == FindingStatus.fixed:
-                    existing.status = FindingStatus.new
+                    await set_status(db, existing, FindingStatus.new, now=now, policy=policy)
                     record_event(
                         db, existing.id, FindingEventType.reopened,
                         from_status=FindingStatus.fixed, to_status=FindingStatus.new,
@@ -119,29 +120,30 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                 # id задаём явно, чтобы сразу сослаться на находку из события
                 finding_id = uuid.uuid4()
                 assignee_group_id = resolver.resolve(result.file_path)
-                db.add(
-                    Finding(
-                        id=finding_id,
-                        entity_id=imp.entity_id,
-                        import_id=imp.id,
-                        title=result.title,
-                        description=result.description,
-                        severity=normalizer.severity(result),
-                        status=FindingStatus.new,
-                        scanner=run.scanner,
-                        rule_id=result.rule_id,
-                        cwe=result.cwe,
-                        file_path=result.file_path,
-                        line_start=result.line_start,
-                        line_end=result.line_end,
-                        fingerprint=result.fingerprint,
-                        scan_scope=imp.scan_scope,
-                        commit_sha=imp.commit_sha,
-                        raw=result.raw,
-                        help_text=result.help,
-                        assignee_group_id=assignee_group_id,
-                    )
+                finding = Finding(
+                    id=finding_id,
+                    entity_id=imp.entity_id,
+                    import_id=imp.id,
+                    title=result.title,
+                    description=result.description,
+                    severity=normalizer.severity(result),
+                    status=FindingStatus.new,
+                    scanner=run.scanner,
+                    rule_id=result.rule_id,
+                    cwe=result.cwe,
+                    file_path=result.file_path,
+                    line_start=result.line_start,
+                    line_end=result.line_end,
+                    fingerprint=result.fingerprint,
+                    scan_scope=imp.scan_scope,
+                    commit_sha=imp.commit_sha,
+                    raw=result.raw,
+                    help_text=result.help,
+                    assignee_group_id=assignee_group_id,
                 )
+                finding.sla_start_at = now
+                finding.due_at = due_from(policy, finding.severity, now)
+                db.add(finding)
                 record_event(
                     db, finding_id, FindingEventType.imported,
                     to_status=FindingStatus.new,

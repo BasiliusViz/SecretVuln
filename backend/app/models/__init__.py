@@ -6,6 +6,7 @@ from app.models.finding_event import ActorType, FindingEvent, FindingEventType
 from app.models.import_ import Import, ImportStatus
 from app.models.ownership_rule import OwnershipRule, RuleSource
 from app.models.role import Role
+from app.models.sla_policy import SlaPolicy
 from app.models.user import AuthSource, User
 from app.models.user_group import GroupSource, UserGroup, group_roles, user_group_members
 
@@ -30,6 +31,7 @@ __all__ = [
     "Import",
     "ImportStatus",
     "Role",
+    "SlaPolicy",
     "UserGroup",
     "GroupSource",
     "user_group_members",

@@ -39,6 +39,7 @@ class Entity(Base, UUIDPKMixin, TimestampMixin):
             "ix_entities_path_cache", "path_cache", unique=True,
             postgresql_ops={"path_cache": "text_pattern_ops"},
         ),
+        Index("ix_entities_tags", "tags", postgresql_using="gin"),
         Index(
             "uq_entities_repo_url", "repo_url", unique=True,
             postgresql_where=text("repo_url IS NOT NULL"),
@@ -72,6 +73,14 @@ class Entity(Base, UUIDPKMixin, TimestampMixin):
     config_file: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     config_commit_sha: Mapped[str | None] = mapped_column(String(64))
     config_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Политика SLA узла; NULL — наследуется от предка (или политика по умолчанию)
+    sla_policy_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sla_policies.id", ondelete="RESTRICT")
+    )
+    # Теги для фильтров и метрик (env:prod, pci); эффективные = свои ∪ предков
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(String(64)), default=list, server_default="{}", nullable=False
+    )
 
     findings = relationship("Finding", back_populates="entity", cascade="all, delete-orphan")
     imports = relationship("Import", back_populates="entity", cascade="all, delete-orphan")
