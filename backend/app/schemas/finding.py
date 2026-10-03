@@ -111,3 +111,17 @@ class BulkSkipped(BaseModel):
 class BulkResult(BaseModel):
     applied: int
     skipped: list[BulkSkipped]
+
+
+class ReasonCount(BaseModel):
+    reason_tag: str
+    count: int
+
+
+class NoisyRule(BaseModel):
+    scanner: str
+    rule_id: str
+    decided: int
+    false_positive: int
+    fp_ratio: float
+    top_reasons: list[ReasonCount]

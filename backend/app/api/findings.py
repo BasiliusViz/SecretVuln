@@ -34,6 +34,7 @@ from app.schemas.finding import (
     FindingRead,
     FindingStatusUpdate,
     HelpRequest,
+    NoisyRule,
 )
 from app.schemas.finding_event import FindingEventRead
 from app.services.code_links import build_code_url, guess_repo_type
@@ -43,6 +44,7 @@ from app.services.entity_settings import effective_settings
 from app.services.entity_tree import entities_with_tag
 from app.services.events import record_event
 from app.services.finding_state import set_status
+from app.services.noisy_rules import noisy_rules
 from app.services.ownership import build_resolver
 
 router = APIRouter(prefix="/api/v1", tags=["findings"])
@@ -180,6 +182,17 @@ async def findings_stats(
     by_status = {st.value: cnt for st, cnt in (await db.execute(q2)).all()}
     total = sum(by_severity.values())
     return {"total": total, "by_severity": by_severity, "by_status": by_status}
+
+
+@router.get("/findings/noisy-rules", response_model=list[NoisyRule])
+async def list_noisy_rules(
+    min_decided: int = Query(10, ge=1, le=100000),
+    min_fp_ratio: float = Query(0.7, ge=0, le=1),
+    _: object = Depends(require_permission("finding", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Правила, по которым большинство решённых находок — ложные (кандидаты на отключение)."""
+    return await noisy_rules(db, min_decided=min_decided, min_fp_ratio=min_fp_ratio)
 
 
 @router.get("/findings/by-number/{number}", response_model=FindingDetail)
