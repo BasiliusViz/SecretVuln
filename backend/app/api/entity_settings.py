@@ -161,10 +161,10 @@ async def update_settings(
     for key, value in fields.items():
         setattr(entity, key, value)
     _pin(entity, *(FIELD_PIN[key] for key in fields))
-    if sla_changed:
-        await db.flush()
-        await recompute_due(db, entity_ids=list(await db.scalars(subtree_ids(entity))))
     try:
+        if sla_changed:
+            await db.flush()
+            await recompute_due(db, entity_ids=list(await db.scalars(subtree_ids(entity))))
         await db.commit()
     except IntegrityError:
         await db.rollback()

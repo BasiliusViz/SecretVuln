@@ -15,8 +15,10 @@ from app.services.entity_paths import (
     is_valid_slug,
     refresh_path,
     slugify,
+    subtree_ids,
     unique_slug,
 )
+from app.services.finding_state import recompute_due
 
 router = APIRouter(prefix="/api/v1/entities", tags=["entities"])
 
@@ -158,6 +160,10 @@ async def update_entity(
     try:
         if moved or renamed:
             await refresh_path(db, entity)
+        if moved:
+            # унаследованная политика SLA могла смениться у всего поддерева
+            await db.flush()
+            await recompute_due(db, entity_ids=list(await db.scalars(subtree_ids(entity))))
         await db.commit()
     except IntegrityError:
         await db.rollback()

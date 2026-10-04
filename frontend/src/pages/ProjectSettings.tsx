@@ -160,11 +160,17 @@ export function ProjectSettings() {
     URL.revokeObjectURL(url);
   };
   const saveSlaTags = async () => {
+    // тег, набранный без Enter, тоже сохраняем
+    const pending = tagInput.trim().toLowerCase();
+    const nextTags = pending && !tags.includes(pending) ? [...tags, pending] : tags;
     const body: Record<string, unknown> = {};
     if (slaDraft !== (settings.sla.own ? (settings.sla.policy_id ?? "") : "")) body.sla_policy_id = slaDraft || null;
-    if (tags.join(",") !== settings.tags.join(",")) body.tags = tags;
+    if (nextTags.join(",") !== settings.tags.join(",")) body.tags = nextTags;
     if (Object.keys(body).length === 0) return;
-    applyResult(await apiJson<EntitySettings>(`${base}/settings`, "PATCH", body));
+    const res = await apiJson<EntitySettings>(`${base}/settings`, "PATCH", body);
+    // при ошибке набранный тег остаётся в поле, чтобы его можно было поправить
+    if (res.ok) setTagInput("");
+    applyResult(res);
   };
   const addTag = () => {
     const tag = tagInput.trim().toLowerCase();

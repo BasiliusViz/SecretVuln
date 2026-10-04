@@ -26,6 +26,8 @@ from app.services.entity_paths import subtree_ids
 from app.services.entity_tree import entities_with_tag
 
 MAX_GROUPS = 50
+# 365 дней — до 54 недель (неполные по краям)
+MAX_WEEKS = 54
 PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 # Колонка времени метрики: для периода и для группировки по неделям
 TIME_COLUMN = {
@@ -122,7 +124,7 @@ async def aggregate(
         q = q.order_by(group.desc())
     else:
         q = q.order_by(value.desc().nulls_last(), group)
-    rows = (await db.execute(q.limit(MAX_GROUPS))).all()
+    rows = (await db.execute(q.limit(MAX_WEEKS if query.group_by == "week" else MAX_GROUPS))).all()
     if query.group_by == "week":
         rows = list(reversed(rows))
 

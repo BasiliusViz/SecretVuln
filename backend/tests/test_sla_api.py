@@ -124,3 +124,28 @@ async def test_settings_tags_validation_and_listing(client, appsec, db):
         {"tag": "team:pay", "inherited_from": None},
     ]
     assert (await client.get("/api/v1/tags", headers=headers)).json() == ["env:prod", "pci", "team:pay"]
+
+
+async def test_patch_duplicate_name_with_days_or_default_is_409(client, appsec, db):
+    _, headers = appsec
+    await make_policy(db, "def", is_default=True)
+    other = await make_policy(db, "other")
+    await make_entity(db, sla_policy_id=other.id)
+    for body in ({"name": "def", "days_high": 10}, {"name": "def", "is_default": True}):
+        r = await client.patch(f"{URL}/{other.id}", json=body, headers=headers)
+        assert r.status_code == 409, body
+
+
+async def test_move_entity_recomputes_inherited_due(client, appsec, db):
+    _, headers = appsec
+    await make_policy(db, "def", is_default=True)
+    strict = await make_policy(db, "strict", high=3)
+    a = await make_entity(db, "a", sla_policy_id=strict.id)
+    b = await make_entity(db, "b")
+    x = await make_entity(db, "x", parent_id=a.id)
+    leaf = await make_entity(db, "leaf", parent_id=x.id)
+    f = await make_finding(db, leaf, sla_start_at=T0)
+    r = await client.patch(f"/api/v1/entities/{x.id}", json={"parent_id": str(b.id)}, headers=headers)
+    assert r.status_code == 200
+    await db.refresh(f)
+    assert f.due_at == T0 + timedelta(days=30)

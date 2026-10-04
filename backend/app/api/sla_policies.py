@@ -120,6 +120,12 @@ async def update_policy(
     for key, value in fields.items():
         if key != "is_default":
             setattr(policy, key, value)
+    # дубль имени ловим здесь: дальше autoflush в _make_default/recompute дал бы 500
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Политика с таким названием уже есть")
     became_default = fields.get("is_default") is True and not policy.is_default
     if became_default:
         await _make_default(db, policy)

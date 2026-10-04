@@ -103,7 +103,7 @@ function PolicyForm({
         {policy && (policy.is_default || policy.entities_count > 0) && (
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("sla.recomputeHint")}</div>
         )}
-        {error && <div style={{ color: "#A32D2D", fontSize: 12 }}>{error}</div>}
+        {error && <div style={{ color: "var(--sev-critical-text)", fontSize: 12 }}>{error}</div>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={onClose}>{t("common.cancel")}</button>
           <button style={PRIMARY_BUTTON} onClick={save} disabled={saving || !draft.name.trim()}>
@@ -163,7 +163,7 @@ export function SlaPolicies() {
       <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 0 }}>{t("sla.intro")}</p>
 
       {actionError && (
-        <div style={{ color: "#A32D2D", fontSize: 12, marginBottom: 8 }}>{actionError}</div>
+        <div style={{ color: "var(--sev-critical-text)", fontSize: 12, marginBottom: 8 }}>{actionError}</div>
       )}
 
       <div className="card" style={{ padding: 0, overflow: "auto" }}>
