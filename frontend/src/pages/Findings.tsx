@@ -5,12 +5,14 @@ import { Link } from "react-router-dom";
 import { apiJson } from "../api/json";
 import type { EntityNode, Finding, Group } from "../api/types";
 import { useCan } from "../auth/AuthContext";
+import { DueBadge } from "../components/DueBadge";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { MONO } from "../components/ui";
 import { SEVERITY_ORDER } from "../theme/severity";
 
 const STATUSES = ["new", "triaged", "confirmed", "in_progress", "false_positive", "risk_accepted", "fixed"];
 const UNASSIGNED = "__none";
+const ORDERS = ["last_seen", "due_at", "severity", "number"] as const;
 const CELL = { padding: "8px 12px" } as const;
 const HEAD = { padding: "8px 12px", fontWeight: 500 } as const;
 
@@ -25,6 +27,10 @@ export function Findings() {
   const [entityFilter, setEntityFilter] = useState("");
   const [withChildren, setWithChildren] = useState(true);
   const [teamFilter, setTeamFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [order, setOrder] = useState<(typeof ORDERS)[number]>("last_seen");
+  const [tags, setTags] = useState<string[]>([]);
   const requestId = useRef(0);
 
   const load = useCallback(() => {
@@ -37,6 +43,9 @@ export function Findings() {
     }
     if (teamFilter === UNASSIGNED) params.set("unassigned", "true");
     else if (teamFilter) params.set("assignee_group_id", teamFilter);
+    if (tagFilter) params.set("tag", tagFilter);
+    if (overdueOnly) params.set("overdue", "true");
+    params.set("order", order);
     params.set("limit", "200");
     // Фильтры меняются быстрее, чем приходят ответы — игнорируем устаревший ответ,
     // если за время запроса уже стартовал более новый.
@@ -44,7 +53,7 @@ export function Findings() {
     void apiJson<Finding[]>(`/api/v1/findings?${params}`).then((r) => {
       if (id === requestId.current) setFindings(r.data ?? []);
     });
-  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter]);
+  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter, tagFilter, overdueOnly, order]);
 
   useEffect(load, [load]);
 
@@ -52,6 +61,7 @@ export function Findings() {
     void apiJson<EntityNode[]>("/api/v1/entities").then((r) =>
       setEntities([...(r.data ?? [])].sort((a, b) => a.path.localeCompare(b.path))),
     );
+    void apiJson<string[]>("/api/v1/tags").then((r) => setTags(r.data ?? []));
   }, []);
 
   const canSeeGroups = can("group:read");
@@ -137,6 +147,39 @@ export function Findings() {
             </option>
           ))}
         </select>
+        {tags.length > 0 && (
+          <select
+            style={{ ...inputStyle, minWidth: 120 }}
+            value={tagFilter}
+            onChange={(e) => setTagFilter(e.target.value)}
+            aria-label={t("vulns.tag")}
+          >
+            <option value="">
+              {t("vulns.tag")}: {t("vulns.all")}
+            </option>
+            {tags.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+        )}
+        <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
+          {t("vulns.overdueOnly")}
+        </label>
+        <select
+          style={{ ...inputStyle, minWidth: 160 }}
+          value={order}
+          onChange={(e) => setOrder(e.target.value as (typeof ORDERS)[number])}
+          aria-label={t("vulns.order")}
+        >
+          {ORDERS.map((o) => (
+            <option key={o} value={o}>
+              {t(`vulns.orderBy.${o}`)}
+            </option>
+          ))}
+        </select>
         {findings !== null && (
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("vulns.count", { count: findings.length })}</span>
         )}
@@ -158,6 +201,7 @@ export function Findings() {
                 <th style={HEAD}>{t("vulns.scanner")}</th>
                 <th style={HEAD}>{t("vulns.file")}</th>
                 <th style={HEAD}>{t("status.label")}</th>
+                <th style={HEAD}>{t("due.label")}</th>
                 <th style={HEAD}>{t("vulns.lastSeen")}</th>
               </tr>
             </thead>
@@ -191,6 +235,9 @@ export function Findings() {
                     {f.file_path ? `${f.file_path}${f.line_start ? `:${f.line_start}` : ""}` : t("common.none")}
                   </td>
                   <td style={{ ...CELL, fontSize: 12 }}>{t(`status.${f.status}`)}</td>
+                  <td style={{ ...CELL, fontSize: 12 }}>
+                    <DueBadge dueAt={f.due_at} status={f.status} />
+                  </td>
                   <td style={{ ...CELL, color: "var(--text-muted)", fontSize: 12 }}>
                     {new Date(f.last_seen).toLocaleString("ru-RU")}
                   </td>

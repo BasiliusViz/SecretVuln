@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { apiFetch } from "../api/client";
 import { apiJson, type ApiResult } from "../api/json";
-import type { EntityNode, EntitySettings, Group, SettingField, SettingValue } from "../api/types";
+import type { EntityNode, EntitySettings, Group, SettingField, SettingValue, SlaPolicy } from "../api/types";
 import { useCan } from "../auth/AuthContext";
 import { MONO, PRIMARY_BUTTON, formatDateTime } from "../components/ui";
 
@@ -28,6 +28,15 @@ const PIN_OF: Record<SettingField, string> = {
 const SHOW_REVERT: SettingField[] = ["default_branch", "owner_group_id", "repo_url"];
 const SECTION = { marginBottom: 16 } as const;
 const HINT = { fontSize: 11, color: "var(--text-muted)" } as const;
+const TAG = {
+  display: "inline-flex",
+  alignItems: "center",
+  fontSize: 12,
+  padding: "2px 8px",
+  borderRadius: 999,
+  border: "1px solid var(--border)",
+  background: "var(--bg-page)",
+} as const;
 
 type Draft = Record<SettingField, string>;
 interface RuleDraft {
@@ -51,6 +60,12 @@ export function ProjectSettings() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [rules, setRules] = useState<RuleDraft[]>([]);
   const [slug, setSlug] = useState("");
+  // "" — наследовать политику
+  const [slaDraft, setSlaDraft] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
+  const [policies, setPolicies] = useState<SlaPolicy[]>([]);
+  const [knownTags, setKnownTags] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -58,6 +73,8 @@ export function ProjectSettings() {
     setSettings(s);
     setDraft(Object.fromEntries(FIELDS.map((f) => [f, ownValue(s.fields[f])])) as Draft);
     setRules(s.ownership_rules.map((r) => ({ pattern: r.pattern, group_id: r.group_id })));
+    setSlaDraft(s.sla.own ? (s.sla.policy_id ?? "") : "");
+    setTags(s.tags);
     if (s.warnings.length > 0) setMessage(s.warnings.join("; "));
   }, []);
 
@@ -83,6 +100,12 @@ export function ProjectSettings() {
   useEffect(() => {
     if (canSeeGroups) void apiJson<Group[]>("/api/v1/groups").then((r) => setGroups(r.data ?? []));
   }, [canSeeGroups]);
+
+  const canSeeSla = can("sla:read");
+  useEffect(() => {
+    if (canSeeSla) void apiJson<SlaPolicy[]>("/api/v1/sla-policies").then((r) => setPolicies(r.data ?? []));
+    void apiJson<string[]>("/api/v1/tags").then((r) => setKnownTags(r.data ?? []));
+  }, [canSeeSla]);
 
   if (loadError) return <p style={{ color: "var(--text-muted)" }}>{loadError}</p>;
   if (!entity || !settings || !draft) return <p style={{ color: "var(--text-muted)" }}>{t("common.loading")}</p>;
@@ -136,6 +159,25 @@ export function ProjectSettings() {
     link.click();
     URL.revokeObjectURL(url);
   };
+  const saveSlaTags = async () => {
+    const body: Record<string, unknown> = {};
+    if (slaDraft !== (settings.sla.own ? (settings.sla.policy_id ?? "") : "")) body.sla_policy_id = slaDraft || null;
+    if (tags.join(",") !== settings.tags.join(",")) body.tags = tags;
+    if (Object.keys(body).length === 0) return;
+    applyResult(await apiJson<EntitySettings>(`${base}/settings`, "PATCH", body));
+  };
+  const addTag = () => {
+    const tag = tagInput.trim().toLowerCase();
+    if (tag && !tags.includes(tag)) setTags([...tags, tag]);
+    setTagInput("");
+  };
+  const ownTags = new Set(tags);
+  const inheritedTags = settings.effective_tags.filter((e) => e.inherited_from && !ownTags.has(e.tag));
+  const slaSource = settings.sla.own
+    ? t("settings.source.manual")
+    : settings.sla.inherited_from
+      ? t("settings.source.inherited", { from: settings.sla.inherited_from })
+      : t("settings.slaDefault");
   const moveRule = (index: number, delta: number) =>
     setRules((prev) => {
       const target = index + delta;
@@ -256,6 +298,96 @@ export function ProjectSettings() {
         </div>
         {editable && (
           <button style={{ ...PRIMARY_BUTTON, marginTop: 12 }} onClick={saveFields}>
+            {t("common.save")}
+          </button>
+        )}
+      </section>
+
+      <section className="card" style={SECTION}>
+        <div className="section-label">{t("settings.slaTitle")}</div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(160px, max-content) 1fr",
+            gap: "10px 16px",
+            alignItems: "center",
+          }}
+        >
+          <label htmlFor="sv-sla" style={{ fontSize: 13 }}>
+            {t("settings.slaPolicy")}
+          </label>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select
+              id="sv-sla"
+              disabled={!editable || !canSeeSla}
+              value={slaDraft}
+              onChange={(e) => setSlaDraft(e.target.value)}
+            >
+              <option value="">
+                {settings.sla.own
+                  ? t("settings.slaInheritPlain")
+                  : t("settings.slaInherit", { name: settings.sla.policy_name ?? t("common.none") })}
+              </option>
+              {policies.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <span style={HINT}>{slaSource}</span>
+          </div>
+          <label htmlFor="sv-tag" style={{ fontSize: 13 }}>
+            {t("settings.tags")}
+          </label>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            {tags.map((tag) => (
+              <span key={tag} style={TAG}>
+                {tag}
+                {editable && (
+                  <button
+                    aria-label={t("settings.removeTag", { tag })}
+                    onClick={() => setTags(tags.filter((x) => x !== tag))}
+                    style={{ border: "none", background: "none", padding: 0, marginLeft: 4, cursor: "pointer", color: "inherit" }}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+            {inheritedTags.map((e) => (
+              <span key={e.tag} style={{ ...TAG, opacity: 0.6 }} title={t("settings.source.inherited", { from: e.inherited_from })}>
+                {e.tag}
+              </span>
+            ))}
+            {editable && (
+              <>
+                <input
+                  id="sv-tag"
+                  list="sv-known-tags"
+                  value={tagInput}
+                  placeholder={t("settings.addTag")}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTag();
+                    }
+                  }}
+                  style={{ width: 160 }}
+                />
+                <datalist id="sv-known-tags">
+                  {knownTags.map((tag) => (
+                    <option key={tag} value={tag} />
+                  ))}
+                </datalist>
+              </>
+            )}
+            {tags.length === 0 && inheritedTags.length === 0 && !editable && <span style={HINT}>{t("common.none")}</span>}
+          </div>
+        </div>
+        <p style={{ ...HINT, marginBottom: 0 }}>{t("settings.slaHint")}</p>
+        {editable && (
+          <button style={{ ...PRIMARY_BUTTON, marginTop: 12 }} onClick={saveSlaTags}>
             {t("common.save")}
           </button>
         )}

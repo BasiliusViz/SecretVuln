@@ -12,6 +12,7 @@ const NAV_ITEMS: { to: string; key: string; end?: boolean; perm?: string }[] = [
   { to: "/projects", key: "nav.projects" },
   { to: "/vulnerabilities", key: "nav.vulns" },
   { to: "/imports", key: "nav.imports" },
+  { to: "/sla", key: "nav.sla", perm: "sla:read" },
   { to: "/groups", key: "nav.groups" },
   { to: "/roles", key: "nav.rolesNav" },
 ];

@@ -47,6 +47,9 @@ export interface Finding {
   assignee_user_id: string | null;
   assigned_manually: boolean;
   help_requested_at: string | null;
+  sla_start_at: string | null;
+  due_at: string | null;
+  resolved_at: string | null;
   assignee_group: GroupBrief | null;
   assignee_user: { id: string; email: string; full_name: string | null } | null;
 }
@@ -131,6 +134,65 @@ export interface EntitySettings {
   config_commit_sha: string | null;
   config_applied_at: string | null;
   warnings: string[];
+  sla: EffectiveSla;
+  tags: string[];
+  effective_tags: { tag: string; inherited_from: string | null }[];
+}
+
+export interface EffectiveSla {
+  policy_id: string | null;
+  policy_name: string | null;
+  /** своя политика узла; иначе унаследована (inherited_from) или по умолчанию */
+  own: boolean;
+  inherited_from: string | null;
+  is_default: boolean;
+}
+
+export const SLA_DAY_FIELDS = ["days_critical", "days_high", "days_medium", "days_low", "days_info"] as const;
+export type SlaDayField = (typeof SLA_DAY_FIELDS)[number];
+
+export interface SlaPolicy extends Record<SlaDayField, number | null> {
+  id: string;
+  name: string;
+  is_default: boolean;
+  /** сколько проектов назначили политику напрямую */
+  entities_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NoisyRule {
+  scanner: string;
+  rule_id: string;
+  decided: number;
+  false_positive: number;
+  fp_ratio: number;
+  top_reasons: { reason_tag: string; count: number }[];
+}
+
+export type MetricName = "count" | "opened" | "resolved" | "overdue" | "sla_ratio" | "mttr_days";
+export type MetricGroupBy = "none" | "severity" | "scanner" | "team" | "entity" | "week";
+export type MetricPeriod = "7d" | "30d" | "90d" | "365d";
+
+/** JSON виджета дашборда — то же, что принимает POST /metrics/aggregate */
+export interface MetricQuery {
+  metric: MetricName;
+  group_by?: MetricGroupBy;
+  period?: MetricPeriod;
+  filters?: { severity?: Severity[]; scanner?: string; entity_id?: string; tag?: string };
+}
+
+export interface MetricRow {
+  key: string | null;
+  label: string | null;
+  value: number | null;
+}
+
+export interface MetricResult {
+  metric: MetricName;
+  group_by: MetricGroupBy;
+  period: MetricPeriod;
+  rows: MetricRow[];
 }
 
 export interface BulkResult {

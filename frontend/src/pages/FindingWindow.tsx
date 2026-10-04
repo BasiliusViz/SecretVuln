@@ -6,6 +6,7 @@ import { apiJson } from "../api/json";
 import { OPEN_STATUSES, type Decision, type FindingDetail, type FindingEvent, type Group } from "../api/types";
 import { useCan } from "../auth/AuthContext";
 import { DecisionDialog, type DecisionBody } from "../components/DecisionDialog";
+import { DueBadge } from "../components/DueBadge";
 import { Modal } from "../components/Modal";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { MONO, PRIMARY_BUTTON, formatDate, formatDateTime } from "../components/ui";
@@ -142,6 +143,10 @@ export function FindingWindow() {
         </span>
         <span style={{ fontSize: 12, ...MUTED }}>
           {t("window.project")}: {finding.entity_path}
+        </span>
+        <span style={{ fontSize: 12 }}>
+          {t("due.label")}: <DueBadge dueAt={finding.due_at} status={finding.status} />
+          {finding.due_at && isOpen && <span style={MUTED}> ({t("window.dueUntil", { date: formatDate(finding.due_at) })})</span>}
         </span>
         <button onClick={copyLink} style={{ marginLeft: "auto", fontSize: 12 }}>
           {t("common.copyLink")}
@@ -306,6 +311,12 @@ export function FindingWindow() {
           <dd style={{ margin: 0 }}>{formatDateTime(finding.first_seen)}</dd>
           <dt>{t("window.lastSeen")}</dt>
           <dd style={{ margin: 0 }}>{formatDateTime(finding.last_seen)}</dd>
+          {finding.resolved_at && (
+            <>
+              <dt>{t("window.resolvedAt")}</dt>
+              <dd style={{ margin: 0 }}>{formatDateTime(finding.resolved_at)}</dd>
+            </>
+          )}
         </dl>
       </details>
 
