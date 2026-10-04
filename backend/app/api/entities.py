@@ -5,29 +5,84 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_permission
+from app.api.deps import Principal, ensure, require_permission
 from app.db.session import get_db
 from app.models import Entity
-from app.schemas.entity import EntityCreate, EntityRead, EntityUpdate, EntityUpsert
+from app.schemas.entity import EntityCreate, EntityRead, EntityStub, EntityUpdate, EntityUpsert
+from app.services.access import Access
 from app.services.entity_paths import (
     build_path,
     ensure_path,
     is_valid_slug,
+    nearest_existing,
     refresh_path,
     slugify,
+    split_path,
     subtree_ids,
     unique_slug,
 )
+from app.services.entity_tree import default_policy, effective_sla
 from app.services.finding_state import recompute_due
 
 router = APIRouter(prefix="/api/v1/entities", tags=["entities"])
 
 
+NOT_FOUND = "Проект не найден"
+
+
 async def _get_or_404(entity_id: uuid.UUID, db: AsyncSession) -> Entity:
     entity = await db.get(Entity, entity_id)
     if entity is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entity not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, NOT_FOUND)
     return entity
+
+
+async def get_entity_checked(
+    db: AsyncSession, access: Access | Principal, entity_id: uuid.UUID, perm: str
+) -> Entity:
+    """Загрузить проект и проверить право на него (404 — не виден, 403 — нет права)."""
+    entity = await _get_or_404(entity_id, db)
+    ensure(access, perm, entity, what="Проект")
+    return entity
+
+
+async def ensure_parent_write(
+    db: AsyncSession, access: Access | Principal, parent_id: uuid.UUID | None
+) -> None:
+    """Создать/перенести узел под parent: `entity:write` на родителе, в корень — глобально."""
+    if parent_id is None:
+        ensure(access, "entity:write", None)
+    else:
+        await get_entity_checked(db, access, parent_id, "entity:write")
+
+
+async def ensure_path_write(db: AsyncSession, access: Access | Principal, path: str) -> None:
+    """Автосоздание узлов по пути: `entity:write` на ближайшем существующем предке.
+
+    Если узел уже есть — право на него самого; если нет ни одного предка — глобально.
+    """
+    try:
+        split_path(path)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+    ensure(access, "entity:write", await nearest_existing(db, path), what="Проект")
+
+
+async def _ensure_sla_on_move(
+    db: AsyncSession, principal: Principal, entity: Entity, new_parent_id: uuid.UUID | None
+) -> None:
+    """Перенос, меняющий эффективную SLA-политику узла, требует `sla:assign` на узле."""
+    if entity.sla_policy_id is not None:
+        return  # своя политика переносом не меняется
+    before = (await effective_sla(db, [entity]))[entity.id].policy_id
+    if new_parent_id is None:
+        default = await default_policy(db)
+        after = default.id if default else None
+    else:
+        parent = await db.get(Entity, new_parent_id)
+        after = (await effective_sla(db, [parent]))[parent.id].policy_id
+    if before != after:
+        ensure(principal, "sla:assign", entity, what="Проект")
 
 
 async def _check_parent(
@@ -57,22 +112,34 @@ def _require_valid_slug(slug: str | None) -> None:
 CONFLICT = "На этом уровне уже есть проект с таким названием или адресом"
 
 
-@router.get("", response_model=list[EntityRead])
+@router.get("", response_model=list[EntityRead | EntityStub])
 async def list_entities(
-    _: object = Depends(require_permission("entity", "read")),
+    principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
-) -> list[Entity]:
-    """Flat list of all nodes; the tree is assembled client-side via parent_id."""
-    result = await db.scalars(select(Entity).order_by(Entity.name))
-    return list(result)
+) -> list[EntityRead | EntityStub]:
+    """Плоский список видимых узлов; дерево собирает клиент по parent_id.
+
+    С `entity:read` узел отдаётся полностью, иначе (предок своего проекта) — заглушкой.
+    """
+    access = principal.access
+    result = await db.scalars(
+        select(Entity).where(access.visible_filter(Entity.path_cache)).order_by(Entity.name)
+    )
+    return [
+        EntityRead.model_validate(e)
+        if access.allows("entity:read", e)
+        else EntityStub.model_validate(e)
+        for e in result
+    ]
 
 
 @router.post("", response_model=EntityRead, status_code=status.HTTP_201_CREATED)
 async def create_entity(
     data: EntityCreate,
-    _: object = Depends(require_permission("entity", "write")),
+    principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
+    await ensure_parent_write(db, principal, data.parent_id)
     if data.parent_id is not None:
         await _check_parent(db, data.parent_id)
     if data.slug is not None:
@@ -93,14 +160,14 @@ async def create_entity(
 @router.get("/by-path/{path:path}", response_model=EntityRead)
 async def get_entity_by_path(
     path: str,
-    _: object = Depends(require_permission("entity", "read")),
+    principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
     try:
         entity, _created = await ensure_path(db, path, create=False)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
-    if entity is None:
+    if entity is None or not principal.access.allows("entity:read", entity):
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Проект «{path}» не найден")
     return entity
 
@@ -109,10 +176,11 @@ async def get_entity_by_path(
 async def upsert_entity_by_path(
     path: str,
     data: EntityUpsert,
-    _: object = Depends(require_permission("entity", "write")),
+    principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
     """Идемпотентно: создаёт недостающие узлы пути и обновляет имя/описание последнего."""
+    await ensure_path_write(db, principal, path)
     try:
         entity, _created = await ensure_path(db, path, create=True)
     except ValueError as exc:
@@ -134,26 +202,29 @@ async def upsert_entity_by_path(
 @router.get("/{entity_id}", response_model=EntityRead)
 async def get_entity(
     entity_id: uuid.UUID,
-    _: object = Depends(require_permission("entity", "read")),
+    principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
-    return await _get_or_404(entity_id, db)
+    return await get_entity_checked(db, principal, entity_id, "entity:read")
 
 
 @router.patch("/{entity_id}", response_model=EntityRead)
 async def update_entity(
     entity_id: uuid.UUID,
     data: EntityUpdate,
-    _: object = Depends(require_permission("entity", "write")),
+    principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
-    entity = await _get_or_404(entity_id, db)
+    entity = await get_entity_checked(db, principal, entity_id, "entity:write")
     fields = data.model_dump(exclude_unset=True)
     if "slug" in fields:
         _require_valid_slug(fields["slug"])
-    if fields.get("parent_id") is not None:
-        await _check_parent(db, fields["parent_id"], child_id=entity_id)
     moved = "parent_id" in fields and fields["parent_id"] != entity.parent_id
+    if moved:
+        await ensure_parent_write(db, principal, fields["parent_id"])
+        if fields["parent_id"] is not None:
+            await _check_parent(db, fields["parent_id"], child_id=entity_id)
+        await _ensure_sla_on_move(db, principal, entity, fields["parent_id"])
     renamed = "slug" in fields and fields["slug"] != entity.slug
     for key, value in fields.items():
         setattr(entity, key, value)
@@ -175,10 +246,10 @@ async def update_entity(
 @router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_entity(
     entity_id: uuid.UUID,
-    _: object = Depends(require_permission("entity", "delete")),
+    principal: Principal = Depends(require_permission("entity", "delete")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Deletes the node and its whole subtree with imports and findings (FK CASCADE)."""
-    entity = await _get_or_404(entity_id, db)
+    entity = await get_entity_checked(db, principal, entity_id, "entity:delete")
     await db.delete(entity)
     await db.commit()

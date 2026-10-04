@@ -1,5 +1,4 @@
 import enum
-import uuid
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, Table, Text
@@ -33,29 +32,11 @@ user_group_members = Table(
 )
 
 
-# Many-to-many: группа ↔ роль (роль даёт права участникам группы)
-group_roles = Table(
-    "group_roles",
-    Base.metadata,
-    Column(
-        "group_id",
-        UUID(as_uuid=True),
-        ForeignKey("user_groups.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-    Column(
-        "role_id",
-        UUID(as_uuid=True),
-        ForeignKey("roles.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
-
 
 class UserGroup(Base, UUIDPKMixin, TimestampMixin):
     """Группа пользователей. Ручная (состав в UI) или LDAP (зеркало LDAP-группы).
 
-    Роли/права (Casbin) навешиваются на группу отдельно — здесь только «кто».
+    Роли на проекты выдаются привязками (`role_bindings`) — здесь только «кто».
     """
 
     __tablename__ = "user_groups"
@@ -75,10 +56,5 @@ class UserGroup(Base, UUIDPKMixin, TimestampMixin):
         "User",
         secondary=user_group_members,
         backref="groups",
-        lazy="selectin",
-    )
-    roles = relationship(
-        "Role",
-        secondary=group_roles,
         lazy="selectin",
     )

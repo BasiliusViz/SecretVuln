@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from sqlalchemy import Float, cast, func, select, tuple_
+from sqlalchemy import Float, cast, func, select, true, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DecisionRequest, Finding
@@ -23,13 +23,18 @@ TOP_REASONS = 3
 LIMIT = 100
 
 
-async def noisy_rules(db: AsyncSession, *, min_decided: int, min_fp_ratio: float) -> list[dict]:
+async def noisy_rules(
+    db: AsyncSession, *, min_decided: int, min_fp_ratio: float, scope=None
+) -> list[dict]:
+    """scope — SQL-условие на Finding (доступные вызывающему проекты); None — все."""
+    if scope is None:
+        scope = true()
     decided = func.count()
     fp = func.count().filter(Finding.status == FindingStatus.false_positive)
     ratio = cast(fp, Float) / decided
     rows = (await db.execute(
         select(Finding.scanner, Finding.rule_id, decided, fp)
-        .where(Finding.status.in_(DECIDED_STATUSES), Finding.rule_id.is_not(None))
+        .where(Finding.status.in_(DECIDED_STATUSES), Finding.rule_id.is_not(None), scope)
         .group_by(Finding.scanner, Finding.rule_id)
         .having(decided >= min_decided, ratio >= min_fp_ratio)
         .order_by(ratio.desc(), decided.desc())
@@ -49,6 +54,7 @@ async def noisy_rules(db: AsyncSession, *, min_decided: int, min_fp_ratio: float
             DecisionRequest.status == DecisionStatus.approved,
             DecisionRequest.reason_tag.is_not(None),
             tuple_(Finding.scanner, Finding.rule_id).in_(keys),
+            scope,
         )
         .group_by(Finding.scanner, Finding.rule_id, DecisionRequest.reason_tag)
         .order_by(func.count().desc(), DecisionRequest.reason_tag)

@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Principal, has_permission, require_permission
+from app.api.deps import Principal, ensure, not_found, require_permission
+from app.api.entities import ensure_path_write, get_entity_checked
 from app.db.session import get_db
 from app.models import Entity, Import
 from app.models.import_ import ImportStatus
@@ -68,12 +69,14 @@ async def _create_import(
 
     warnings: list[str] = []
     if config is not None:
-        if not has_permission(principal, "entity", "write"):
+        if not principal.access.allows("entity:write", entity):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                "Файл настроек проекта применяется только с правом entity:write",
+                "Файл настроек проекта применяется только с правом entity:write на проект",
             )
-        warnings = await apply_config(db, entity, config, commit_sha=commit_sha or None)
+        warnings = await apply_config(
+            db, entity, config, commit_sha=commit_sha or None, access=principal.access
+        )
 
     branch = branch or None
     # Ветка формы не задана — проверяем по ветке из SARIF-provenance, чтобы не закоммитить
@@ -139,9 +142,7 @@ async def create_import(
     db: AsyncSession = Depends(get_db),
 ) -> ImportCreated:
     parsed = await _read_config(config)
-    entity = await db.get(Entity, entity_id)
-    if entity is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entity not found")
+    entity = await get_entity_checked(db, principal, entity_id, "import:import")
     return await _create_import(
         db, principal, entity, file, config=parsed, created=[],
         branch=branch, commit_sha=commit_sha, pipeline_url=pipeline_url,
@@ -175,9 +176,7 @@ async def create_import_by_path(
 
     created: list[Entity] = []
     if entity_id is not None:
-        entity = await db.get(Entity, entity_id)
-        if entity is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Entity not found")
+        entity = await get_entity_checked(db, principal, entity_id, "import:import")
     else:
         try:
             entity, _ = await ensure_path(db, project_path, create=False)
@@ -189,10 +188,11 @@ async def create_import_by_path(
                     status.HTTP_404_NOT_FOUND,
                     f"Проект «{project_path}» не найден. Передайте auto_create=true, чтобы создать его",
                 )
-            if not has_permission(principal, "entity", "write"):
-                raise HTTPException(
-                    status.HTTP_403_FORBIDDEN, "Автосоздание проектов требует права entity:write"
-                )
+            # entity:write на ближайшем существующем предке (новый корень — глобально)
+            # и право загрузки на путь будущего узла
+            await ensure_path_write(db, principal, project_path)
+            if not principal.access.allows("import:import", project_path):
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав: import:import")
             try:
                 entity, created = await ensure_path(db, project_path, create=True)
             except IntegrityError:
@@ -201,6 +201,8 @@ async def create_import_by_path(
                     status.HTTP_409_CONFLICT,
                     f"Конфликт при создании проекта «{project_path}», повторите попытку",
                 )
+        else:
+            ensure(principal, "import:import", entity, what="Проект")
 
     return await _create_import(
         db, principal, entity, file, config=parsed, created=created,
@@ -212,12 +214,10 @@ async def create_import_by_path(
 @router.get("/entities/{entity_id}/imports", response_model=list[ImportRead])
 async def list_entity_imports(
     entity_id: uuid.UUID,
-    _: object = Depends(require_permission("import", "read")),
+    principal: Principal = Depends(require_permission("import", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[Import]:
-    entity = await db.get(Entity, entity_id)
-    if entity is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Entity not found")
+    await get_entity_checked(db, principal, entity_id, "import:read")
     result = await db.scalars(
         select(Import)
         .where(Import.entity_id == entity_id)
@@ -228,20 +228,26 @@ async def list_entity_imports(
 
 @router.get("/imports", response_model=list[ImportRead])
 async def list_all_imports(
-    _: object = Depends(require_permission("import", "read")),
+    principal: Principal = Depends(require_permission("import", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[Import]:
-    result = await db.scalars(select(Import).order_by(Import.created_at.desc()).limit(100))
+    result = await db.scalars(
+        select(Import)
+        .where(principal.access.entity_scope("import:read", Import.entity_id))
+        .order_by(Import.created_at.desc())
+        .limit(100)
+    )
     return list(result)
 
 
 @router.get("/imports/{import_id}", response_model=ImportRead)
 async def get_import(
     import_id: uuid.UUID,
-    _: object = Depends(require_permission("import", "read")),
+    principal: Principal = Depends(require_permission("import", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> Import:
     imp = await db.get(Import, import_id)
     if imp is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Import not found")
+        raise not_found("Импорт")
+    ensure(principal, "import:read", await db.get(Entity, imp.entity_id), what="Импорт")
     return imp

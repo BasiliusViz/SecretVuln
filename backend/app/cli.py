@@ -80,7 +80,18 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("finding", "triage"), ("finding", "approve"),
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"),
-            ("sla", "read"), ("sla", "manage"),
+            ("sla", "read"), ("sla", "manage"), ("sla", "assign"),
+        ],
+    ),
+    "Руководитель команды": (
+        "Ведёт свою ветку проектов: разбор находок, импорты, SLA и раздача доступа команде",
+        [
+            ("entity", "read"), ("entity", "write"),
+            ("finding", "read"), ("finding", "triage"),
+            ("import", "read"), ("import", "import"),
+            ("sla", "read"), ("sla", "assign"),
+            ("access", "manage"),
+            ("group", "read"),
         ],
     ),
     "Администратор": (
@@ -92,7 +103,8 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"), ("group", "write"), ("group", "delete"),
             ("role", "read"), ("role", "write"), ("role", "delete"),
-            ("sla", "read"), ("sla", "manage"),
+            ("sla", "read"), ("sla", "manage"), ("sla", "assign"),
+            ("access", "manage"),
         ],
     ),
 }

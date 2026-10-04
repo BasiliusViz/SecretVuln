@@ -1,4 +1,7 @@
-"""Группы пользователей: CRUD, ручное членство, синхронизация из LDAP."""
+"""Группы пользователей: CRUD, ручное членство, синхронизация из LDAP.
+
+Роли группа получает привязками — см. `api/bindings.py`.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_permission
+from app.api.deps import Principal, not_found, require_permission
 from app.db.session import get_db
-from app.models import Role, User, UserGroup
+from app.models import Entity, Role, RoleBinding, User, UserGroup
 from app.models.user import AuthSource
 from app.models.user_group import GroupSource
 from app.schemas.user_group import (
@@ -20,10 +23,10 @@ from app.schemas.user_group import (
     GroupDetail,
     GroupRead,
     GroupUpdate,
-    RoleBrief,
     SyncResult,
     UserBrief,
 )
+from app.services.access import casbin_rule, ancestors
 from app.services.auth.ldap import LdapError, list_group_members
 
 router = APIRouter(prefix="/api/v1", tags=["groups"])
@@ -38,7 +41,6 @@ def _to_read(group: UserGroup) -> GroupRead:
         ldap_group=group.ldap_group,
         last_synced_at=group.last_synced_at,
         member_count=len(group.members),
-        roles=[RoleBrief(id=r.id, name=r.name) for r in group.roles],
     )
 
 
@@ -51,11 +53,37 @@ async def _get_or_404(group_id: uuid.UUID, db: AsyncSession) -> UserGroup:
 
 @router.get("/groups", response_model=list[GroupRead])
 async def list_groups(
-    _: object = Depends(require_permission("group", "read")),
+    entity_id: uuid.UUID | None = None,
+    principal: Principal = Depends(require_permission("group", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[GroupRead]:
-    result = await db.scalars(select(UserGroup).order_by(UserGroup.name))
-    return [_to_read(g) for g in result]
+    result = list(await db.scalars(select(UserGroup).order_by(UserGroup.name)))
+    if entity_id is None:
+        return [_to_read(g) for g in result]
+    entity = await db.get(Entity, entity_id)
+    if entity is None or not principal.access.can_see(entity):
+        raise not_found("Проект")
+    with_access = await _groups_with_read(db, entity)
+    return [_to_read(g).model_copy(update={"has_access": g.id in with_access}) for g in result]
+
+
+async def _groups_with_read(db: AsyncSession, entity: Entity) -> set[uuid.UUID]:
+    """Группы, у которых есть finding:read на проект (глобально или на предке-или-самом)."""
+    lineage = ancestors(entity.path_cache) + [entity.path_cache]
+    rows = await db.scalars(
+        select(RoleBinding.group_id)
+        .join(Role, Role.id == RoleBinding.role_id)
+        .join(
+            casbin_rule,
+            (casbin_rule.c.ptype == "p")
+            & (casbin_rule.c.v0 == Role.name)
+            & (casbin_rule.c.v1 == "finding")
+            & (casbin_rule.c.v2 == "read"),
+        )
+        .outerjoin(Entity, Entity.id == RoleBinding.entity_id)
+        .where(RoleBinding.entity_id.is_(None) | Entity.path_cache.in_(lineage))
+    )
+    return set(rows)
 
 
 @router.post("/groups", response_model=GroupDetail, status_code=status.HTTP_201_CREATED)
@@ -233,42 +261,6 @@ async def sync_group(
     return SyncResult(
         added=added, removed=removed, provisioned=provisioned, total=len(desired)
     )
-
-
-@router.post("/groups/{group_id}/roles/{role_id}", response_model=GroupDetail)
-async def add_role(
-    group_id: uuid.UUID,
-    role_id: uuid.UUID,
-    _: object = Depends(require_permission("group", "write")),
-    db: AsyncSession = Depends(get_db),
-) -> GroupDetail:
-    group = await _get_or_404(group_id, db)
-    role = await db.get(Role, role_id)
-    if role is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Роль не найдена")
-    if role not in group.roles:
-        group.roles.append(role)
-        await db.commit()
-        await db.refresh(group)
-    members = [UserBrief.model_validate(u) for u in group.members]
-    return GroupDetail(**_to_read(group).model_dump(), members=members)
-
-
-@router.delete("/groups/{group_id}/roles/{role_id}", response_model=GroupDetail)
-async def remove_role(
-    group_id: uuid.UUID,
-    role_id: uuid.UUID,
-    _: object = Depends(require_permission("group", "write")),
-    db: AsyncSession = Depends(get_db),
-) -> GroupDetail:
-    group = await _get_or_404(group_id, db)
-    role = await db.get(Role, role_id)
-    if role is not None and role in group.roles:
-        group.roles.remove(role)
-        await db.commit()
-        await db.refresh(group)
-    members = [UserBrief.model_validate(u) for u in group.members]
-    return GroupDetail(**_to_read(group).model_dump(), members=members)
 
 
 @router.get("/users", response_model=list[UserBrief])

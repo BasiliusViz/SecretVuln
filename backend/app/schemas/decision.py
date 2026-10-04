@@ -62,3 +62,6 @@ class DecisionRead(BaseModel):
     decision_comment: str | None
     decided_at: datetime | None
     created_at: datetime
+    # заполняются в общем списке: путь проекта и право вызывающего одобрять
+    entity_path: str | None = None
+    can_approve: bool = False

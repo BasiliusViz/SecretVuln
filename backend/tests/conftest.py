@@ -119,8 +119,53 @@ async def client(monkeypatch):
     await engine.dispose()
 
 
+async def _role(db, name: str):
+    from sqlalchemy import select
+
+    from app.models import Role
+
+    role = await db.scalar(select(Role).where(Role.name == name))
+    if role is None:
+        role = Role(name=name, is_builtin=True)
+        db.add(role)
+        await db.commit()
+        await db.refresh(role)
+    return role
+
+
 @pytest.fixture
-def make_user(db):
+def grant(db):
+    """Выдать пользователю роль на проект (None — на всё дерево) через свою группу."""
+    from app.models import RoleBinding, UserGroup
+    from app.models.user_group import GroupSource
+
+    async def _grant(user, role_name: str, entity=None):
+        group_name = f"personal:{user.email}"
+        from sqlalchemy import select
+
+        group = await db.scalar(select(UserGroup).where(UserGroup.name == group_name))
+        if group is None:
+            group = UserGroup(name=group_name, source=GroupSource.manual)
+            group.members.append(user)
+            db.add(group)
+            await db.commit()
+            await db.refresh(group)
+        role = await _role(db, role_name)
+        db.add(
+            RoleBinding(
+                group_id=group.id,
+                role_id=role.id,
+                entity_id=entity.id if entity is not None else None,
+            )
+        )
+        await db.commit()
+        return group
+
+    return _grant
+
+
+@pytest.fixture
+def make_user(db, grant):
     async def _make(email: str, *, superuser: bool = False, roles: tuple[str, ...] = ()):
         user = User(
             email=email,
@@ -131,18 +176,21 @@ def make_user(db):
         db.add(user)
         await db.commit()
         await db.refresh(user)
-        token = create_access_token(user.id, {"roles": list(roles)})
+        for role_name in roles:
+            await grant(user, role_name)
+        token = create_access_token(user.id)
         return user, {"Authorization": f"Bearer {token}"}
 
     return _make
 
 
 @pytest.fixture
-def builtin_policies() -> None:
+async def builtin_policies(db) -> None:
     from app.authz.enforcer import set_role_permissions
     from app.cli import BUILTIN_ROLES
 
     for name, (_desc, perms) in BUILTIN_ROLES.items():
+        await _role(db, name)
         set_role_permissions(name, perms)
 
 
@@ -159,3 +207,29 @@ async def appsec(make_user, builtin_policies):
 @pytest.fixture
 async def developer(make_user, builtin_policies):
     return await make_user("bob@test.local", roles=("Разработчик",))
+
+
+@pytest.fixture
+async def two_teams(db, make_user, grant, builtin_policies):
+    """Две ветки `a` и `b` (у каждой — сервис `svc`) и команды на них.
+
+    lead_a / lead_b — «Руководитель команды» на своей ветке, dev_a — «Разработчик» на `a`.
+    Каждый пользователь — кортеж (user, headers).
+    """
+    from types import SimpleNamespace
+
+    from tests.factories import make_entity
+
+    a = await make_entity(db, "a")
+    a_svc = await make_entity(db, "svc", parent_id=a.id)
+    b = await make_entity(db, "b")
+    b_svc = await make_entity(db, "svc", parent_id=b.id)
+    lead_a = await make_user("lead-a@test.local")
+    await grant(lead_a[0], "Руководитель команды", a)
+    lead_b = await make_user("lead-b@test.local")
+    await grant(lead_b[0], "Руководитель команды", b)
+    dev_a = await make_user("dev-a@test.local")
+    await grant(dev_a[0], "Разработчик", a)
+    return SimpleNamespace(
+        a=a, a_svc=a_svc, b=b, b_svc=b_svc, lead_a=lead_a, lead_b=lead_b, dev_a=dev_a
+    )

@@ -34,6 +34,20 @@ class EntityRead(BaseModel):
     custom_fields: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    stub: bool = False
+
+
+class EntityStub(BaseModel):
+    """Узел, видимый только как часть пути (предок проекта, на который есть права)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    slug: str
+    path: str = Field(validation_alias=AliasChoices("path_cache", "path"))
+    parent_id: uuid.UUID | None
+    stub: bool = True
 
 
 class EntityUpsert(BaseModel):
