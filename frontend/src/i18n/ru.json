@@ -613,12 +613,22 @@
       "provisioned": "Создано пользователей",
       "reassigned": "Переназначено",
       "rules": "Правила",
-      "field": "Поле"
+      "field": "Поле",
+      "group": "Группа",
+      "role": "Роль",
+      "entity": "Проект",
+      "permissions": "Права"
     },
     "reason": {
       "bad_password": "Неверный пароль",
       "unknown_user": "Неизвестный пользователь",
-      "inactive": "Учётная запись отключена"
+      "inactive": "Учётная запись отключена",
+      "ldap_rejected": "Отказ LDAP"
+    },
+    "source": {
+      "config": "Файл настроек",
+      "ldap": "LDAP",
+      "manual": "Вручную"
     }
   }
 }

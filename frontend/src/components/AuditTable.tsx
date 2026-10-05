@@ -9,13 +9,20 @@ import { MONO, formatDateTime } from "./ui";
 const PAGE_SIZE = 50;
 
 // Ключи, у которых массив из двух элементов — это список, а не пара «было/стало»
-const VALUE_KEYS = new Set(["added", "removed"]);
+const VALUE_KEYS = new Set(["added", "removed", "permissions"]);
+// Значения, которые переводим по словарю, а не выводим как есть
+const TRANSLATED = new Set(["reason", "source"]);
 
 const CELL = { padding: "8px 12px" };
 const TH = { ...CELL, fontWeight: 500 };
 
-function isDiff(key: string, value: unknown): value is [unknown, unknown] {
-  return Array.isArray(value) && value.length === 2 && !VALUE_KEYS.has(key);
+/** create/delete пишут снимок полей, остальные действия — пары `[было, стало]` */
+function isSnapshot(action: string): boolean {
+  return action.endsWith(".create") || action.endsWith(".delete");
+}
+
+function isDiff(action: string, key: string, value: unknown): value is [unknown, unknown] {
+  return !isSnapshot(action) && Array.isArray(value) && value.length === 2 && !VALUE_KEYS.has(key);
 }
 
 /** Компактный вывод значения: списки примитивов — через запятую, объекты — JSON */
@@ -30,7 +37,7 @@ function formatValue(value: unknown, t: TFunction): string {
   return JSON.stringify(value);
 }
 
-function Changes({ changes }: { changes: Record<string, unknown> | null }) {
+function Changes({ action, changes }: { action: string; changes: Record<string, unknown> | null }) {
   const { t } = useTranslation();
   const entries = Object.entries(changes ?? {});
   if (entries.length === 0) {
@@ -47,7 +54,7 @@ function Changes({ changes }: { changes: Record<string, unknown> | null }) {
       </thead>
       <tbody>
         {entries.map(([key, value]) => {
-          const diff = isDiff(key, value);
+          const diff = isDiff(action, key, value);
           return (
             <tr key={key} style={{ borderTop: "1px solid var(--border)", verticalAlign: "top" }}>
               <td style={{ padding: "4px 8px" }}>{t(`audit.fieldName.${key}`, { defaultValue: key })}</td>
@@ -55,8 +62,8 @@ function Changes({ changes }: { changes: Record<string, unknown> | null }) {
                 {diff ? formatValue(value[0], t) : "—"}
               </td>
               <td style={{ padding: "4px 8px", ...MONO, wordBreak: "break-word" }}>
-                {key === "reason" && typeof value === "string"
-                  ? t(`audit.reason.${value}`, { defaultValue: value })
+                {TRANSLATED.has(key) && typeof value === "string"
+                  ? t(`audit.${key}.${value}`, { defaultValue: value })
                   : formatValue(diff ? value[1] : value, t)}
               </td>
             </tr>
@@ -186,7 +193,7 @@ export function AuditTable({ query, showProject = true }: { query: AuditQuery; s
                     {open && (
                       <tr style={{ borderBottom: "1px solid var(--border)" }}>
                         <td colSpan={columns} style={{ padding: "8px 12px 12px 36px", background: "var(--bg-page)" }}>
-                          <Changes changes={e.changes} />
+                          <Changes action={e.action} changes={e.changes} />
                         </td>
                       </tr>
                     )}

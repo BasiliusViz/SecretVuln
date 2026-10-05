@@ -61,6 +61,7 @@ export function ProjectSettings() {
   // Права — на этом проекте (страница рисуется только после загрузки entity)
   const editable = can("entity:write", entity?.path);
   const canAssignSla = can("sla:assign", entity?.path);
+  const canAudit = can("audit:read", entity?.path);
   const [settings, setSettings] = useState<EntitySettings | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -254,12 +255,12 @@ export function ProjectSettings() {
         tabs={[
           { id: "settings", label: t("settings.tabSettings") },
           { id: "access", label: t("access.tab") },
-          ...(can("audit:read", entity.path) ? [{ id: "audit" as const, label: t("audit.tab") }] : []),
+          ...(canAudit ? [{ id: "audit" as const, label: t("audit.tab") }] : []),
         ]}
         value={tab}
         onChange={setTab}
       />
-      {tab === "audit" ? (
+      {tab === "audit" && canAudit ? (
         <AuditTable key={entity.id} query={{ entity_id: entity.id, subtree: true }} />
       ) : tab === "access" ? (
         <ProjectAccess key={entity.id} entity={entity} />

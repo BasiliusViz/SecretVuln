@@ -31,10 +31,15 @@ export function Imports() {
     apiFetch("/api/v1/entities").then((r) => r.json()).then(setEntities).catch(() => {});
   }, []);
 
+  // Номер запроса: поздний ответ со старым фильтром не перезаписывает список
+  const requestSeq = useRef(0);
   const loadImports = useCallback(() => {
+    const seq = ++requestSeq.current;
     apiFetch(onlyMine ? "/api/v1/imports?uploaded_by=me" : "/api/v1/imports")
       .then((r) => r.json())
-      .then(setImports)
+      .then((data) => {
+        if (seq === requestSeq.current) setImports(data);
+      })
       .catch(() => {});
   }, [onlyMine]);
 

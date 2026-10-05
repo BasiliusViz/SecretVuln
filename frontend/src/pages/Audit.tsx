@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { apiJson } from "../api/json";
 import { AUDIT_ACTION_GROUPS, type AuditQuery, type EntityNode } from "../api/types";
+import { useCan } from "../auth/AuthContext";
 import { AuditTable } from "../components/AuditTable";
 
 const inputStyle = {
@@ -17,6 +18,7 @@ const inputStyle = {
 
 export function Audit() {
   const { t } = useTranslation();
+  const can = useCan();
   const [entities, setEntities] = useState<EntityNode[]>([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -89,7 +91,7 @@ export function Audit() {
           aria-label={t("audit.project")}
         >
           <option value="">{t("audit.allProjects")}</option>
-          {entities.map((e) => (
+          {entities.filter((e) => can("audit:read", e.path)).map((e) => (
             <option key={e.id} value={e.id}>
               {e.path}
             </option>
