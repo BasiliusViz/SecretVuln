@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { ThemeProvider } from "./theme/ThemeContext";
 import { Assets } from "./pages/Assets";
+import { Audit } from "./pages/Audit";
 import { Dashboard } from "./pages/Dashboard";
 import { FindingWindow } from "./pages/FindingWindow";
 import { Findings } from "./pages/Findings";
@@ -57,6 +58,7 @@ export function App() {
               <Route path="groups" element={<Groups />} />
               <Route path="roles" element={<Roles />} />
               <Route path="sla" element={<SlaPolicies />} />
+              <Route path="audit" element={<Audit />} />
               {/* старые адреса — чтобы не ломались сохранённые ссылки */}
               <Route path="assets" element={<Navigate to="/projects" replace />} />
               <Route path="findings" element={<Navigate to="/vulnerabilities" replace />} />

@@ -13,7 +13,8 @@
     "groups": "Группы и доступ",
     "rolesNav": "Роли",
     "sla": "Политики SLA",
-    "theme": "Тема"
+    "theme": "Тема",
+    "audit": "Журнал аудита"
   },
   "severity": {
     "label": "Критичность",
@@ -187,7 +188,8 @@
       "group": "Группы и пользователи",
       "role": "Роли",
       "sla": "Политики SLA",
-      "access": "Доступ к проектам"
+      "access": "Доступ к проектам",
+      "audit": "Журнал аудита"
     },
     "action": {
       "read": "Чтение",
@@ -481,5 +483,139 @@
     "apiUp": "API работает",
     "dbUp": "БД доступна",
     "dbDown": "БД недоступна"
+  },
+  "audit": {
+    "title": "Журнал аудита",
+    "time": "Время",
+    "actor": "Кто",
+    "target": "Объект",
+    "project": "Проект",
+    "ip": "IP",
+    "system": "Система",
+    "deleted": "(удалён)",
+    "empty": "Записей нет",
+    "noChanges": "Без подробностей",
+    "field": "Поле",
+    "before": "Было",
+    "after": "Стало",
+    "shown": "{{from}}–{{to}} из {{total}}",
+    "prev": "Назад",
+    "next": "Вперёд",
+    "dateFrom": "С",
+    "dateTo": "По",
+    "actorPlaceholder": "Кто (email)",
+    "allActions": "Все действия",
+    "allProjects": "Все проекты",
+    "group": {
+      "auth": "Вход",
+      "projects": "Проекты",
+      "access": "Доступ",
+      "groups": "Группы",
+      "roles": "Роли",
+      "sla": "SLA",
+      "imports": "Импорты"
+    },
+    "action": {
+      "label": "Действие",
+      "auth": {
+        "login": "Вход",
+        "login_failed": "Неудачный вход"
+      },
+      "entity": {
+        "create": "Создание проекта",
+        "update": "Изменение проекта",
+        "move": "Перенос проекта",
+        "delete": "Удаление проекта",
+        "settings_update": "Изменение настроек проекта",
+        "unpin": "Возврат настройки к файлу"
+      },
+      "ownership": {
+        "rules_update": "Изменение правил владельцев"
+      },
+      "findings": {
+        "reassign": "Переназначение уязвимостей"
+      },
+      "binding": {
+        "create": "Выдача доступа",
+        "delete": "Отзыв доступа"
+      },
+      "group": {
+        "create": "Создание группы",
+        "update": "Изменение группы",
+        "delete": "Удаление группы",
+        "member_add": "Добавление участника",
+        "member_remove": "Удаление участника",
+        "sync": "Синхронизация с LDAP"
+      },
+      "role": {
+        "create": "Создание роли",
+        "update": "Изменение роли",
+        "delete": "Удаление роли",
+        "permissions_update": "Изменение прав роли"
+      },
+      "sla_policy": {
+        "create": "Создание политики SLA",
+        "update": "Изменение политики SLA",
+        "delete": "Удаление политики SLA"
+      },
+      "import": {
+        "create": "Загрузка SARIF"
+      }
+    },
+    "targetType": {
+      "entity": "Проект",
+      "group": "Группа",
+      "role": "Роль",
+      "binding": "Привязка",
+      "sla_policy": "Политика SLA",
+      "import": "Импорт",
+      "user": "Пользователь"
+    },
+    "fieldName": {
+      "name": "Название",
+      "slug": "Слаг",
+      "path_cache": "Путь",
+      "parent_id": "Родитель",
+      "description": "Описание",
+      "default_branch": "Основная ветка",
+      "owner_group_id": "Группа-владелец",
+      "repo_url": "Репозиторий",
+      "repo_type": "Тип репозитория",
+      "repo_path_prefix": "Префикс пути",
+      "sla_policy_id": "Политика SLA",
+      "tags": "Теги",
+      "custom_fields": "Доп. поля",
+      "pinned_fields": "Закреплённые поля",
+      "source": "Источник",
+      "ldap_group": "LDAP-группа",
+      "group_id": "Группа",
+      "role_id": "Роль",
+      "entity_id": "Проект",
+      "days_critical": "Дней: критичная",
+      "days_high": "Дней: высокая",
+      "days_medium": "Дней: средняя",
+      "days_low": "Дней: низкая",
+      "days_info": "Дней: инфо",
+      "is_default": "По умолчанию",
+      "filename": "Файл",
+      "scanner": "Сканер",
+      "branch": "Ветка",
+      "commit_sha": "Коммит",
+      "pipeline_url": "Пайплайн",
+      "scan_scope": "Объём сканирования",
+      "user": "Пользователь",
+      "reason": "Причина",
+      "added": "Добавлено",
+      "removed": "Удалено",
+      "provisioned": "Создано пользователей",
+      "reassigned": "Переназначено",
+      "rules": "Правила",
+      "field": "Поле"
+    },
+    "reason": {
+      "bad_password": "Неверный пароль",
+      "unknown_user": "Неизвестный пользователь",
+      "inactive": "Учётная запись отключена"
+    }
   }
 }

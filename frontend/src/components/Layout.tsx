@@ -15,6 +15,7 @@ const NAV_ITEMS: { to: string; key: string; end?: boolean; perm?: string }[] = [
   { to: "/sla", key: "nav.sla", perm: "sla:read" },
   { to: "/groups", key: "nav.groups" },
   { to: "/roles", key: "nav.rolesNav" },
+  { to: "/audit", key: "nav.audit", perm: "audit:read" },
 ];
 
 export function Layout() {
