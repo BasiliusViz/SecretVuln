@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,7 @@ from app.models import User, UserGroup
 from app.models.user import AuthSource
 from app.models.user_group import GroupSource
 from app.schemas.auth import LoginRequest, TokenResponse, UserRead
+from app.services import audit
 from app.services.auth.ldap import LdapError, authenticate as ldap_authenticate
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -41,26 +42,55 @@ async def _sync_user_groups(db: AsyncSession, user: User, ldap_groups: list[str]
     for group in result:
         if user not in group.members:
             group.members.append(user)
+            audit.record_audit(
+                db,
+                None,
+                audit.GROUP_MEMBER_ADD,
+                target=("group", group.id, group.name),
+                changes={"user": user.email},
+            )
             changed = True
     if changed:
         await db.commit()
 
 
+async def _failed(
+    db: AsyncSession, login: str, ip: str | None, code: int, detail: str, reason: str
+) -> HTTPException:
+    """Записать неудачный вход и закоммитить до ответа с ошибкой."""
+    audit.record_audit(db, login, audit.AUTH_LOGIN_FAILED, changes={"reason": reason}, ip=ip)
+    await db.commit()
+    return HTTPException(code, detail)
+
+
+async def _succeeded(db: AsyncSession, user: User, ip: str | None) -> TokenResponse:
+    audit.record_audit(db, user, audit.AUTH_LOGIN, ip=ip)
+    await db.commit()
+    return TokenResponse(access_token=create_access_token(user.id))
+
+
+_BAD_CREDENTIALS = "Неверный email или пароль"
+_INACTIVE = "Учётная запись отключена"
+
+
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+async def login(
+    data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)
+) -> TokenResponse:
     settings = get_settings()
     email = data.email.lower()
+    ip = audit.client_ip(request)
+    unauthorized = status.HTTP_401_UNAUTHORIZED
 
     user = await db.scalar(select(User).where(User.email == email))
 
     # 1. Локальный пользователь с паролем.
     if user and user.auth_source == AuthSource.local and user.hashed_password:
         if not verify_password(data.password, user.hashed_password):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный email или пароль")
+            raise await _failed(db, email, ip, unauthorized, _BAD_CREDENTIALS, "bad_password")
         if not user.is_active:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Учётная запись отключена")
-        token = create_access_token(user.id)
-        return TokenResponse(access_token=token)
+            raise await _failed(db, email, ip, status.HTTP_403_FORBIDDEN, _INACTIVE, "inactive")
+        return await _succeeded(db, user, ip)
 
     # 2. LDAP.
     if settings.ldap_enabled:
@@ -69,7 +99,7 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
         except LdapError as e:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"LDAP недоступен: {e}")
         if ldap_user is None:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный email или пароль")
+            raise await _failed(db, email, ip, unauthorized, _BAD_CREDENTIALS, "bad_password")
 
         # Провижёнинг / обновление локальной записи.
         if user is None:
@@ -87,16 +117,14 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
         await db.refresh(user)
 
         if not user.is_active:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Учётная запись отключена")
+            raise await _failed(db, email, ip, status.HTTP_403_FORBIDDEN, _INACTIVE, "inactive")
 
         # Ленивая синхронизация: добавляем юзера в наши LDAP-группы,
         # совпадающие с его группами в LDAP (полный синк — по кнопке в UI).
         await _sync_user_groups(db, user, ldap_user.groups)
+        return await _succeeded(db, user, ip)
 
-        token = create_access_token(user.id)
-        return TokenResponse(access_token=token)
-
-    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный email или пароль")
+    raise await _failed(db, email, ip, unauthorized, _BAD_CREDENTIALS, "unknown_user")
 
 
 @router.get("/me", response_model=UserRead)
