@@ -173,6 +173,32 @@ async def test_entity_delete_visible_to_parent_auditor(client, db, two_teams, ad
     assert [i["action"] for i in body["items"]] == [audit.ENTITY_DELETE]
 
 
+async def test_entity_delete_logs_subtree_bindings(client, db, two_teams, admin):
+    from app.models import Role, RoleBinding, UserGroup
+    from sqlalchemy import select
+
+    t = two_teams
+    role = await db.scalar(select(Role).where(Role.name == "Наблюдатель"))
+    g = UserGroup(name="G")
+    db.add(g)
+    await db.flush()
+    db.add_all([
+        RoleBinding(group_id=g.id, role_id=role.id, entity_id=t.a_svc.id),
+        RoleBinding(group_id=g.id, role_id=role.id, entity_id=t.a.id),  # выше — не сносится
+    ])
+    await db.commit()
+
+    await client.delete(f"/api/v1/entities/{t.a_svc.id}", headers=admin[1])
+    (cascaded,) = await _log(db, audit.BINDING_DELETE)
+    # на родителя, как и само entity.delete: у удалённого проекта entity_id обнулится
+    assert cascaded.entity_id == t.a.id
+    assert cascaded.changes["entity"] == "a/svc"
+    assert cascaded.changes["cascade"] == audit.ENTITY_DELETE
+    assert cascaded.changes["group"] == "G"
+    items = (await client.get("/api/v1/audit", headers=t.lead_a[1])).json()["items"]
+    assert {i["action"] for i in items} == {audit.ENTITY_DELETE, audit.BINDING_DELETE}
+
+
 async def test_upsert_by_path_logs_created_and_updated(client, db, admin):
     _, h = admin
     r = await client.put("/api/v1/entities/by-path/x/y", json={"name": "Y"}, headers=h)

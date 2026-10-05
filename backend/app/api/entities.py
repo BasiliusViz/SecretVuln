@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, ensure, get_current_principal, require_permission
 from app.db.session import get_db
-from app.models import Entity
+from app.models import Entity, RoleBinding
 from app.schemas.entity import EntityCreate, EntityRead, EntityStub, EntityUpdate, EntityUpsert
 from app.services import audit
 from app.services.access import Access
@@ -275,9 +275,16 @@ async def delete_entity(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Deletes the node and its whole subtree with imports and findings (FK CASCADE)."""
+    from app.api.bindings import record_cascade_delete  # bindings импортирует entities
+
     entity = await get_entity_checked(db, principal, entity_id, "entity:delete")
     # пишем на родителя: событие увидит руководитель поддерева (у корня — глобальное)
     parent = await db.get(Entity, entity.parent_id) if entity.parent_id else None
+    # привязки поддерева снесёт FK CASCADE — по записи на каждую, тоже на родителя
+    await record_cascade_delete(
+        db, principal, request, audit.ENTITY_DELETE,
+        where=RoleBinding.entity_id.in_(subtree_ids(entity)), log_on=parent,
+    )
     audit.record_audit(
         db,
         principal.user,

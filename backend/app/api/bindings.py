@@ -60,6 +60,10 @@ async def _check_grant(db: AsyncSession, principal: Principal, role: Role, entit
         raise _too_strong(missing)
 
 
+# «писать на проект самой привязки»
+_SAME = object()
+
+
 def _record(
     db: AsyncSession,
     principal: Principal,
@@ -70,10 +74,12 @@ def _record(
     role: Role,
     entity: Entity | None,
     cascade: str | None = None,
+    log_on: Entity | None | object = _SAME,
 ) -> None:
     """Привязка на проект — событие проекта, на всё дерево — глобальное.
 
     cascade: действие, из-за которого привязка удалена каскадом (`group.delete`…).
+    log_on: проект, в журнал которого писать вместо `entity` (удаляемый проект — на родителя).
     """
     where = entity.path_cache if entity is not None else "*"
     audit.record_audit(
@@ -81,7 +87,7 @@ def _record(
         principal.user,
         action,
         target=("binding", binding.id, f"{group.name} → {role.name} @ {where}"),
-        entity=entity,
+        entity=entity if log_on is _SAME else log_on,
         changes={
             "group": group.name,
             "role": role.name,
@@ -115,16 +121,24 @@ async def _save(
 
 
 async def record_cascade_delete(
-    db: AsyncSession, principal: Principal, request: Request, cascade: str, *, where
+    db: AsyncSession,
+    principal: Principal,
+    request: Request,
+    cascade: str,
+    *,
+    where,
+    log_on: Entity | None | object = _SAME,
 ) -> None:
-    """`binding.delete` на каждую привязку, которую снесёт каскад удаления группы/роли.
+    """`binding.delete` на каждую привязку, которую снесёт каскад удаления группы/роли/проекта.
 
     Иначе руководитель проекта не увидит в журнале, что доступ к его ветке пропал.
+    log_on — см. `_record`: при удалении проекта события пишутся на его родителя.
     """
     for binding in await db.scalars(select(RoleBinding).where(where)):
         _record(
             db, principal, request, audit.BINDING_DELETE,
-            binding, binding.group, binding.role, binding.entity, cascade=cascade,
+            binding, binding.group, binding.role, binding.entity,
+            cascade=cascade, log_on=log_on,
         )
 
 
