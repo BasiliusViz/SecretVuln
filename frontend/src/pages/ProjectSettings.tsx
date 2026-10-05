@@ -6,6 +6,7 @@ import { apiFetch } from "../api/client";
 import { apiJson, type ApiResult } from "../api/json";
 import type { EntityNode, EntitySettings, Group, SettingField, SettingValue, SlaPolicy } from "../api/types";
 import { useCan } from "../auth/AuthContext";
+import { AuditTable } from "../components/AuditTable";
 import { Tabs } from "../components/Tabs";
 import { MONO, PRIMARY_BUTTON, formatDateTime } from "../components/ui";
 import { ProjectAccess } from "./ProjectAccess";
@@ -55,7 +56,7 @@ export function ProjectSettings() {
   const { id = "" } = useParams();
   const { t } = useTranslation();
   const can = useCan();
-  const [tab, setTab] = useState<"settings" | "access">("settings");
+  const [tab, setTab] = useState<"settings" | "access" | "audit">("settings");
   const [entity, setEntity] = useState<EntityNode | null>(null);
   // Права — на этом проекте (страница рисуется только после загрузки entity)
   const editable = can("entity:write", entity?.path);
@@ -253,11 +254,14 @@ export function ProjectSettings() {
         tabs={[
           { id: "settings", label: t("settings.tabSettings") },
           { id: "access", label: t("access.tab") },
+          ...(can("audit:read", entity.path) ? [{ id: "audit" as const, label: t("audit.tab") }] : []),
         ]}
         value={tab}
         onChange={setTab}
       />
-      {tab === "access" ? (
+      {tab === "audit" ? (
+        <AuditTable key={entity.id} query={{ entity_id: entity.id, subtree: true }} />
+      ) : tab === "access" ? (
         <ProjectAccess key={entity.id} entity={entity} />
       ) : (
       <>
