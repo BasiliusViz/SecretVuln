@@ -158,9 +158,10 @@ async def update_role(
     changes = audit.diff(before, audit.snapshot(role, audit.FIELDS["role"]), audit.FIELDS["role"])
     if changes:
         _record(db, principal, request, audit.ROLE_UPDATE, role, changes)
-    if role.name != old_name:
-        await rename_permissions(db, old_name, role.name)
     try:
+        # autoflush: UPDATE casbin_rule сбросит и UPDATE roles — конфликт имени ловим здесь
+        if role.name != old_name:
+            await rename_permissions(db, old_name, role.name)
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -178,6 +179,8 @@ async def set_permissions(
     db: AsyncSession = Depends(get_db),
 ) -> RoleRead:
     role = await _get_or_404(role_id, db)
+    # параллельные замены прав одной роли — по очереди, иначе delete+insert задвоят строки
+    await db.execute(select(Role.id).where(Role.id == role.id).with_for_update())
     validated = _validate(data.permissions)
     before = set(_perm_list((await get_permissions(db, [role.name]))[role.name]))
     after = set(_perm_list(validated))

@@ -386,6 +386,18 @@ async def test_roles_and_permissions(client, db, admin):
     assert rows[3].changes["permissions"] == ["audit:read", "entity:read"]
 
 
+async def test_role_rename_to_taken_name_is_409(client, db, admin):
+    from app.authz.policies import get_permissions
+
+    _, h = admin
+    perms = [{"resource": "entity", "action": "read"}]
+    await client.post("/api/v1/roles", json={"name": "A", "permissions": perms}, headers=h)
+    b = (await client.post("/api/v1/roles", json={"name": "B", "permissions": []}, headers=h)).json()
+    r = await client.patch(f"/api/v1/roles/{b['id']}", json={"name": "A"}, headers=h)
+    assert r.status_code == 409
+    assert (await get_permissions(db, ["A"]))["A"] == [("entity", "read")]
+
+
 async def test_role_permissions_roll_back_with_audit(client, db, admin, monkeypatch):
     """Права роли и запись журнала — одна транзакция: сбой записи не меняет права."""
     import pytest
