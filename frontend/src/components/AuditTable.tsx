@@ -153,6 +153,13 @@ export function AuditTable({ query, showProject = true }: { query: AuditQuery; s
                   <Fragment key={e.id}>
                     <tr
                       onClick={() => toggle(e.id)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter" || ev.key === " ") {
+                          ev.preventDefault();
+                          toggle(e.id);
+                        }
+                      }}
+                      tabIndex={0}
                       aria-expanded={open}
                       style={{
                         borderBottom: "1px solid var(--border)",

@@ -98,3 +98,21 @@ async def test_ldap_login_syncs_groups_only_on_change(client, db, monkeypatch):
     assert (adds[0].target_type, adds[0].target_id) == ("group", group.id)
     assert adds[0].changes == {"user": "l@test.local"}
     assert len(await _rows(db, audit.AUTH_LOGIN)) == 2
+
+
+async def test_ldap_rejected_unknown_vs_known_user(client, db, monkeypatch):
+    """LDAP не различает «нет пользователя» и «неверный пароль» — причина зависит от того, знаем ли мы его."""
+    db.add(User(email="known@test.local", auth_source=AuthSource.ldap))
+    await db.commit()
+    monkeypatch.setattr("app.api.auth.get_settings", lambda: SimpleNamespace(ldap_enabled=True))
+    monkeypatch.setattr("app.api.auth.ldap_authenticate", lambda email, pw: None)
+
+    for email in ("ghost@test.local", "known@test.local"):
+        r = await client.post("/api/v1/auth/login", json={"email": email, "password": "x"})
+        assert r.status_code == 401
+
+    rows = await _rows(db, audit.AUTH_LOGIN_FAILED)
+    assert [(r.actor_label, r.changes) for r in rows] == [
+        ("ghost@test.local", {"reason": "ldap_rejected"}),
+        ("known@test.local", {"reason": "bad_password"}),
+    ]

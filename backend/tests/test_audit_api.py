@@ -212,11 +212,12 @@ async def test_import_auto_create_logs_entities(client, db, admin):
 
 
 async def test_import_with_config_logs_settings_change(client, db, admin):
-    from tests.factories import make_entity, make_sarif
+    from tests.factories import make_entity, make_group, make_sarif
 
     _, h = admin
     await make_entity(db, "cfg")
-    config = b"version: 1\ndefault_branch: main\n"
+    team = await make_group(db, "pay")
+    config = b"version: 1\ndefault_branch: main\nownership:\n  - path: src/pay/\n    owner: pay\n"
 
     def files():
         return {
@@ -237,6 +238,11 @@ async def test_import_with_config_logs_settings_change(client, db, admin):
     assert r.status_code == 201, r.text
     [row] = await _log(db, audit.ENTITY_SETTINGS_UPDATE)
     assert row.changes == {"source": "config", "default_branch": [None, "main"]}
+    [rules] = await _log(db, audit.OWNERSHIP_RULES_UPDATE)
+    assert rules.changes == {
+        "source": "config",
+        "rules": [[], [{"pattern": "src/pay/", "group_id": str(team.id)}]],
+    }
 
 
 # --- запись: доступ, группы, роли, SLA ---

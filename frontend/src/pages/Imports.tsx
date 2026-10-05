@@ -28,7 +28,10 @@ export function Imports() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadEntities = useCallback(() => {
-    apiFetch("/api/v1/entities").then((r) => r.json()).then(setEntities).catch(() => {});
+    apiFetch("/api/v1/entities")
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(setEntities)
+      .catch(() => {});
   }, []);
 
   // Номер запроса: поздний ответ со старым фильтром не перезаписывает список
@@ -36,8 +39,8 @@ export function Imports() {
   const loadImports = useCallback(() => {
     const seq = ++requestSeq.current;
     apiFetch(onlyMine ? "/api/v1/imports?uploaded_by=me" : "/api/v1/imports")
-      .then((r) => r.json())
-      .then((data) => {
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((data: ImportRecord[]) => {
         if (seq === requestSeq.current) setImports(data);
       })
       .catch(() => {});
