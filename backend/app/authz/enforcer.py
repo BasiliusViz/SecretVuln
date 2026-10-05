@@ -3,6 +3,10 @@
 Политики (роль→право) хранятся в таблице casbin_rule, которую создаёт сам
 адаптер (в наших миграциях её нет). enforce() — in-memory, быстрый.
 Изменения политик пишутся через адаптер сразу в БД.
+
+API меняет casbin_rule SQL-ом в транзакции запроса (`policies.py`), поэтому кеш
+enforcer'а может отставать — функции ниже перечитывают политики перед работой.
+Используются CLI (`seed-roles`) и тестами.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ def get_enforcer() -> casbin.Enforcer:
 def role_permissions(role: str) -> list[tuple[str, str]]:
     """Список (resource, action) для роли."""
     enf = get_enforcer()
+    enf.load_policy()
     out: list[tuple[str, str]] = []
     for pol in enf.get_filtered_policy(0, role):
         # pol = [sub, obj, act]
@@ -45,6 +50,7 @@ def role_permissions(role: str) -> list[tuple[str, str]]:
 def set_role_permissions(role: str, perms: list[tuple[str, str]]) -> None:
     """Полностью заменяет набор прав роли."""
     enf = get_enforcer()
+    enf.load_policy()
     for pol in list(enf.get_filtered_policy(0, role)):
         enf.remove_policy(*pol)
     for resource, action in perms:

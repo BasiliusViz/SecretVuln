@@ -360,6 +360,31 @@ async def test_roles_and_permissions(client, db, admin):
     assert rows[3].changes["permissions"] == ["audit:read", "entity:read"]
 
 
+async def test_role_permissions_roll_back_with_audit(client, db, admin, monkeypatch):
+    """Права роли и запись журнала — одна транзакция: сбой записи не меняет права."""
+    import pytest
+
+    from app.api import roles as roles_api
+    from app.authz.policies import get_permissions
+
+    _, h = admin
+    perms = [{"resource": "entity", "action": "read"}]
+    role = (
+        await client.post("/api/v1/roles", json={"name": "R", "permissions": perms}, headers=h)
+    ).json()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("audit down")
+
+    monkeypatch.setattr(roles_api, "_record", boom)
+    new = perms + [{"resource": "audit", "action": "read"}]
+    with pytest.raises(RuntimeError):
+        await client.put(
+            f"/api/v1/roles/{role['id']}/permissions", json={"permissions": new}, headers=h
+        )
+    assert (await get_permissions(db, ["R"]))["R"] == [("entity", "read")]
+
+
 async def test_bindings_project_and_global(client, db, two_teams, admin):
     from app.models import Role, UserGroup
     from sqlalchemy import select

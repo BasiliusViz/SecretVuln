@@ -12,11 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.bindings import record_cascade_delete
 from app.api.deps import Principal, require_permission
 from app.authz import permissions as perms
-from app.authz.enforcer import (
-    delete_role_policies,
-    rename_role_policies,
-    role_permissions,
-    set_role_permissions,
+from app.authz.policies import (
+    delete_permissions,
+    get_permissions,
+    rename_permissions,
+    replace_permissions,
 )
 from app.db.session import get_db
 from app.models import Role, RoleBinding
@@ -32,14 +32,18 @@ from app.schemas.role import (
 router = APIRouter(prefix="/api/v1", tags=["roles"])
 
 
-def _to_read(role: Role) -> RoleRead:
+def _to_read(role: Role, pairs: list[tuple[str, str]]) -> RoleRead:
     return RoleRead(
         id=role.id,
         name=role.name,
         description=role.description,
         is_builtin=role.is_builtin,
-        permissions=[Permission(resource=r, action=a) for r, a in role_permissions(role.name)],
+        permissions=[Permission(resource=r, action=a) for r, a in pairs],
     )
+
+
+async def _read(db: AsyncSession, role: Role) -> RoleRead:
+    return _to_read(role, (await get_permissions(db, [role.name]))[role.name])
 
 
 async def _get_or_404(role_id: uuid.UUID, db: AsyncSession) -> Role:
@@ -95,8 +99,9 @@ async def list_roles(
     _: object = Depends(require_permission("role", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[RoleRead]:
-    result = await db.scalars(select(Role).order_by(Role.name))
-    return [_to_read(r) for r in result]
+    roles = list(await db.scalars(select(Role).order_by(Role.name)))
+    by_role = await get_permissions(db, [r.name for r in roles])
+    return [_to_read(r, by_role[r.name]) for r in roles]
 
 
 @router.post("/roles", response_model=RoleRead, status_code=status.HTTP_201_CREATED)
@@ -115,13 +120,13 @@ async def create_role(
             **audit.snapshot(role, audit.FIELDS["role"]),
             "permissions": _perm_list(validated),
         })
+        await replace_permissions(db, role.name, validated)
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Роль с таким именем уже существует")
     await db.refresh(role)
-    set_role_permissions(role.name, validated)
-    return _to_read(role)
+    return await _read(db, role)
 
 
 @router.get("/roles/{role_id}", response_model=RoleRead)
@@ -130,7 +135,7 @@ async def get_role(
     _: object = Depends(require_permission("role", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> RoleRead:
-    return _to_read(await _get_or_404(role_id, db))
+    return await _read(db, await _get_or_404(role_id, db))
 
 
 @router.patch("/roles/{role_id}", response_model=RoleRead)
@@ -153,15 +158,15 @@ async def update_role(
     changes = audit.diff(before, audit.snapshot(role, audit.FIELDS["role"]), audit.FIELDS["role"])
     if changes:
         _record(db, principal, request, audit.ROLE_UPDATE, role, changes)
+    if role.name != old_name:
+        await rename_permissions(db, old_name, role.name)
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Роль с таким именем уже существует")
     await db.refresh(role)
-    if role.name != old_name:
-        rename_role_policies(old_name, role.name)
-    return _to_read(role)
+    return await _read(db, role)
 
 
 @router.put("/roles/{role_id}/permissions", response_model=RoleRead)
@@ -174,17 +179,17 @@ async def set_permissions(
 ) -> RoleRead:
     role = await _get_or_404(role_id, db)
     validated = _validate(data.permissions)
-    before = set(_perm_list(role_permissions(role.name)))
+    before = set(_perm_list((await get_permissions(db, [role.name]))[role.name]))
     after = set(_perm_list(validated))
-    # Сначала Casbin: если он упадёт, в журнале не останется несостоявшегося изменения
-    set_role_permissions(role.name, validated)
     if before != after:
+        # Права и запись журнала — одной транзакцией: либо обе, либо ни одной
+        await replace_permissions(db, role.name, validated)
         _record(db, principal, request, audit.ROLE_PERMISSIONS_UPDATE, role, {
             "added": sorted(after - before),
             "removed": sorted(before - after),
         })
         await db.commit()
-    return _to_read(role)
+    return await _read(db, role)
 
 
 @router.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -202,8 +207,8 @@ async def delete_role(
     )
     _record(db, principal, request, audit.ROLE_DELETE, role, {
         **audit.snapshot(role, audit.FIELDS["role"]),
-        "permissions": _perm_list(role_permissions(role.name)),
+        "permissions": _perm_list((await get_permissions(db, [role.name]))[role.name]),
     })
-    delete_role_policies(role.name)
+    await delete_permissions(db, role.name)
     await db.delete(role)
     await db.commit()
