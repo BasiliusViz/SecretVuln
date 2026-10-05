@@ -172,7 +172,7 @@ async def update_settings(
     for key, value in fields.items():
         setattr(entity, key, value)
     _pin(entity, *(FIELD_PIN[key] for key in fields))
-    _record_settings(db, principal, entity, before, audit.ENTITY_SETTINGS_UPDATE, request)
+    await _record_settings(db, principal, entity, before, audit.ENTITY_SETTINGS_UPDATE, request)
     try:
         if sla_changed:
             await db.flush()
@@ -218,7 +218,7 @@ async def replace_rules(
             audit.OWNERSHIP_RULES_UPDATE,
             target=audit.entity_target(entity),
             entity=entity,
-            changes={"rules": [before, after]},
+            changes={"rules": await audit.rules_with_names(db, before, after)},
             ip=audit.client_ip(request),
         )
     _pin(entity, "ownership_rules")
@@ -241,7 +241,7 @@ async def unpin_setting(
     warnings = await apply_stored_config(
         db, entity, only={data.field}, access=principal.access
     )
-    _record_settings(
+    await _record_settings(
         db, principal, entity, before, audit.ENTITY_UNPIN, request, extra={"field": data.field}
     )
     await db.commit()
@@ -287,7 +287,7 @@ async def reassign_subtree(
     return {"reassigned": total}
 
 
-def _record_settings(
+async def _record_settings(
     db: AsyncSession,
     principal: Principal,
     entity: Entity,
@@ -307,7 +307,7 @@ def _record_settings(
             action,
             target=audit.entity_target(entity),
             entity=entity,
-            changes={**(extra or {}), **changes},
+            changes={**(extra or {}), **await audit.with_names(db, changes)},
             ip=audit.client_ip(request),
         )
 

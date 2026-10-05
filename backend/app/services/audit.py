@@ -15,9 +15,10 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AuditLog, Entity, User
+from app.models import AuditLog, Entity, SlaPolicy, User, UserGroup
 from app.models.finding_event import ActorType
 
 # --- действия: `<объект>.<действие>` ---
@@ -87,6 +88,14 @@ FIELDS: dict[str, tuple[str, ...]] = {
     "import": ("filename", "scanner", "branch", "commit_sha", "pipeline_url", "scan_scope"),
 }
 
+# Ссылки, рядом с которыми пишется имя: UUID в журнале ничего не скажет аудитору,
+# а объект к моменту чтения может быть удалён или переименован.
+NAMED_REFS: dict[str, tuple[str, Any]] = {
+    "parent_id": ("parent", Entity.path_cache),
+    "owner_group_id": ("owner_group", UserGroup.name),
+    "sla_policy_id": ("sla_policy", SlaPolicy.name),
+}
+
 # Не попадают в журнал, даже если их по ошибке включат в список полей.
 _SECRETS = frozenset({"password", "hashed_password", "token", "access_token", "secret"})
 
@@ -138,6 +147,45 @@ def diff(before: dict[str, Any], after: dict[str, Any], fields: Iterable[str]) -
     return out
 
 
+async def with_names(db: AsyncSession, changes: dict[str, Any]) -> dict[str, Any]:
+    """Добавить к `parent_id`/`owner_group_id`/`sla_policy_id` соседний ключ с именем.
+
+    Форма значения та же: скаляр для снимка, `[было, стало]` для разницы.
+    """
+    def ids(value: Any) -> list[Any]:
+        return value if isinstance(value, list) else [value]
+
+    names: dict[str, str] = {}
+    for key, (_, column) in NAMED_REFS.items():
+        if key not in changes:
+            continue
+        wanted = {uuid.UUID(str(v)) for v in ids(changes[key]) if v}
+        if wanted:
+            model = column.class_
+            rows = await db.execute(select(model.id, column).where(model.id.in_(wanted)))
+            names.update({str(i): n for i, n in rows.all()})
+    out: dict[str, Any] = {}
+    for key, value in changes.items():
+        out[key] = value
+        if key in NAMED_REFS:
+            name_key = NAMED_REFS[key][0]
+            if isinstance(value, list):
+                out[name_key] = [names.get(str(v)) if v else None for v in value]
+            else:
+                out[name_key] = names.get(str(value)) if value else None
+    return out
+
+
+async def rules_with_names(
+    db: AsyncSession, before: list[dict], after: list[dict]
+) -> list[list[dict]]:
+    """Правила владения `[было, стало]` с именем группы рядом с `group_id`."""
+    wanted = {uuid.UUID(r["group_id"]) for r in (*before, *after)}
+    rows = await db.execute(select(UserGroup.id, UserGroup.name).where(UserGroup.id.in_(wanted)))
+    names = {str(i): n for i, n in rows.all()}
+    return [[{**r, "group": names.get(r["group_id"])} for r in side] for side in (before, after)]
+
+
 def client_ip(request: Request | None) -> str | None:
     if request is None or request.client is None:
         return None
@@ -187,7 +235,7 @@ def entity_target(entity: Entity) -> tuple[str, uuid.UUID, str]:
     return ("entity", entity.id, entity.path_cache)
 
 
-def record_entities_created(
+async def record_entities_created(
     db: AsyncSession, actor: User | None, nodes: Iterable[Entity], *, ip: str | None = None
 ) -> None:
     """`entity.create` для каждого созданного узла (узлы уже получили id — после flush)."""
@@ -198,6 +246,6 @@ def record_entities_created(
             ENTITY_CREATE,
             target=entity_target(node),
             entity=node,
-            changes=snapshot(node, FIELDS["entity"]),
+            changes=await with_names(db, snapshot(node, FIELDS["entity"])),
             ip=ip,
         )

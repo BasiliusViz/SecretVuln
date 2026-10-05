@@ -157,7 +157,7 @@ async def create_entity(
     db.add(entity)
     try:
         await db.flush()
-        audit.record_entities_created(db, principal.user, [entity], ip=audit.client_ip(request))
+        await audit.record_entities_created(db, principal.user, [entity], ip=audit.client_ip(request))
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -203,9 +203,9 @@ async def upsert_entity_by_path(
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(entity, key, value)
     if created:
-        audit.record_entities_created(db, principal.user, created, ip=ip)
+        await audit.record_entities_created(db, principal.user, created, ip=ip)
     else:
-        _record_update(db, principal, entity, before, audit.ENTITY_UPDATE, ip)
+        await _record_update(db, principal, entity, before, audit.ENTITY_UPDATE, ip)
     try:
         await db.commit()
     except IntegrityError:
@@ -251,7 +251,7 @@ async def update_entity(
         if moved or renamed:
             await refresh_path(db, entity)
         action = audit.ENTITY_MOVE if moved else audit.ENTITY_UPDATE
-        _record_update(
+        await _record_update(
             db, principal, entity, before, action, audit.client_ip(request),
             also_for=old_parent if old_parent and not _under(entity, old_parent) else None,
         )
@@ -284,14 +284,14 @@ async def delete_entity(
         audit.ENTITY_DELETE,
         target=audit.entity_target(entity),
         entity=parent,
-        changes=audit.snapshot(entity, audit.FIELDS["entity"]),
+        changes=await audit.with_names(db, audit.snapshot(entity, audit.FIELDS["entity"])),
         ip=audit.client_ip(request),
     )
     await db.delete(entity)
     await db.commit()
 
 
-def _record_update(
+async def _record_update(
     db: AsyncSession,
     principal: Principal,
     entity: Entity,
@@ -306,6 +306,7 @@ def _record_update(
     changes = audit.diff(before, after, audit.FIELDS["entity"])
     if not changes:
         return
+    changes = await audit.with_names(db, changes)
     for where in (entity, also_for):
         if where is not None:
             audit.record_audit(

@@ -99,14 +99,17 @@ async def _create_import(
             audit.record_audit(
                 db, principal.user, audit.ENTITY_SETTINGS_UPDATE,
                 target=audit.entity_target(entity), entity=entity,
-                changes={"source": "config", **changes}, ip=ip,
+                changes={"source": "config", **await audit.with_names(db, changes)}, ip=ip,
             )
         rules_after = await _rules_snapshot(db, entity)
         if rules_before != rules_after:
             audit.record_audit(
                 db, principal.user, audit.OWNERSHIP_RULES_UPDATE,
                 target=audit.entity_target(entity), entity=entity,
-                changes={"source": "config", "rules": [rules_before, rules_after]}, ip=ip,
+                changes={
+                    "source": "config",
+                    "rules": await audit.rules_with_names(db, rules_before, rules_after),
+                }, ip=ip,
             )
 
     branch = branch or None
@@ -138,7 +141,7 @@ async def _create_import(
         config_warnings=warnings,
     )
     db.add(import_record)
-    audit.record_entities_created(db, principal.user, created, ip=ip)
+    await audit.record_entities_created(db, principal.user, created, ip=ip)
     try:
         await db.flush()
         audit.record_audit(

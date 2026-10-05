@@ -121,6 +121,7 @@ async def test_entity_create_update_move_delete(client, db, admin):
     assert created.actor_id == user.id
     assert str(created.entity_id) == svc["id"]
     assert created.changes["parent_id"] == a["id"]
+    assert created.changes["parent"] == "a"
     assert created.ip
 
     await client.patch(f"/api/v1/entities/{svc['id']}", json={"description": "d"}, headers=h)
@@ -134,6 +135,7 @@ async def test_entity_create_update_move_delete(client, db, admin):
     assert mv_old.changes == mv.changes
     assert mv.changes["path_cache"] == ["a/svc", "b/svc"]
     assert mv.changes["parent_id"] == [a["id"], b["id"]]
+    assert mv.changes["parent"] == ["a", "b"]
 
     # пустая правка — без записи
     await client.patch(f"/api/v1/entities/{svc['id']}", json={"description": "d"}, headers=h)
@@ -202,7 +204,21 @@ async def test_settings_rules_unpin_reassign(client, db, admin):
     rules = [{"pattern": "src/**", "group_id": str(g.id)}]
     assert (await client.put(f"{base}/ownership-rules", json=rules, headers=h)).status_code == 200
     (o,) = await _log(db, audit.OWNERSHIP_RULES_UPDATE)
-    assert o.changes == {"rules": [[], [{"pattern": "src/**", "group_id": str(g.id)}]]}
+    assert o.changes == {
+        "rules": [[], [{"pattern": "src/**", "group_id": str(g.id), "group": "Team"}]]
+    }
+
+    r = await client.patch(f"{base}/settings", json={"owner_group_id": str(g.id)}, headers=h)
+    assert r.status_code == 200
+    s2 = (await _log(db, audit.ENTITY_SETTINGS_UPDATE))[-1]
+    assert s2.changes["owner_group_id"] == [None, str(g.id)]
+    assert s2.changes["owner_group"] == [None, "Team"]
+
+    p = (await client.post("/api/v1/sla-policies", json={"name": "Strict", "days_high": 5}, headers=h)).json()
+    r = await client.patch(f"{base}/settings", json={"sla_policy_id": p["id"]}, headers=h)
+    assert r.status_code == 200, r.text
+    s3 = (await _log(db, audit.ENTITY_SETTINGS_UPDATE))[-1]
+    assert s3.changes["sla_policy"] == [None, "Strict"]
 
     r = await client.post(f"{base}/settings/unpin", json={"field": "default_branch"}, headers=h)
     assert r.status_code == 200
@@ -259,7 +275,7 @@ async def test_import_with_config_logs_settings_change(client, db, admin):
     [rules] = await _log(db, audit.OWNERSHIP_RULES_UPDATE)
     assert rules.changes == {
         "source": "config",
-        "rules": [[], [{"pattern": "src/pay/", "group_id": str(team.id)}]],
+        "rules": [[], [{"pattern": "src/pay/", "group_id": str(team.id), "group": team.name}]],
     }
 
 
