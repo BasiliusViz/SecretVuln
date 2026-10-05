@@ -56,6 +56,7 @@ ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/decisions/{decision_id}/approve"): "point",
     ("POST", "/api/v1/decisions/{decision_id}/reject"): "point",
     ("POST", "/api/v1/metrics/aggregate"): "list",
+    ("GET", "/api/v1/audit"): "list",  # с entity_id — ensure audit:read
     # группы и пользователи (состав групп — только глобальный group:write)
     ("GET", "/api/v1/groups"): "global",  # с entity_id — узел должен быть виден
     ("POST", "/api/v1/groups"): "global",
