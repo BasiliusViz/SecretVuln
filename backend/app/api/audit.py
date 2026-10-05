@@ -25,7 +25,7 @@ async def list_audit(
     entity_id: uuid.UUID | None = None,
     subtree: bool = True,
     actor: str | None = Query(default=None, max_length=255),
-    action: str | None = Query(default=None, max_length=100),
+    action: list[str] = Query(default=[], max_length=20),
     target_type: str | None = Query(default=None, max_length=50),
     target_id: uuid.UUID | None = None,
     date_from: datetime | None = None,
@@ -55,11 +55,14 @@ async def list_audit(
     if actor:
         conds.append(AuditLog.actor_label.ilike(f"%{_escape_like(actor)}%", escape="\\"))
     if action:
-        # «binding.» — все действия группы, иначе точное совпадение
+        # несколько значений — ИЛИ; «binding.» — все действия группы, иначе точное совпадение
         conds.append(
-            func.starts_with(AuditLog.action, action)
-            if action.endswith(".")
-            else AuditLog.action == action
+            or_(
+                *(
+                    func.starts_with(AuditLog.action, a) if a.endswith(".") else AuditLog.action == a
+                    for a in action
+                )
+            )
         )
     if target_type:
         conds.append(AuditLog.target_type == target_type)

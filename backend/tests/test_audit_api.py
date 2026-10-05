@@ -63,6 +63,8 @@ async def test_filters_actor_action_dates_paging(client, db, two_teams, admin):
     assert (await get(actor="LEAD-B")).json()["total"] == 1
     assert (await get(action="entity.update")).json()["total"] == 2
     assert (await get(action="binding.")).json()["total"] == 1
+    assert (await get(action=["binding.", "role.update"])).json()["total"] == 2
+    assert (await get(action=["entity.", "binding.create"])).json()["total"] == 3
     assert (await get(target_type="role")).json()["total"] == 1
     future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     assert (await get(date_from=future)).json()["total"] == 0

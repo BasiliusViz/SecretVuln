@@ -11,7 +11,7 @@
 
 ## API для фронта
 
-`GET /api/v1/audit` → `{items, total}`, новые сверху. Параметры: `entity_id`, `subtree` (по умолчанию true), `actor` (подстрока email), `action` (точно или префикс с точкой: `binding.`), `target_type`, `target_id`, `date_from`, `date_to` (ISO), `limit` (1–500, по умолчанию 50), `offset`. Без права — 403; чужой/невидимый проект в `entity_id` — 404.
+`GET /api/v1/audit` → `{items, total}`, новые сверху. Параметры: `entity_id`, `subtree` (по умолчанию true), `actor` (подстрока email), `action` (точно или префикс с точкой: `binding.`; можно несколько — `?action=entity.&action=ownership.` — объединяются через ИЛИ), `target_type`, `target_id`, `date_from`, `date_to` (ISO), `limit` (1–500, по умолчанию 50), `offset`. Без права — 403; чужой/невидимый проект в `entity_id` — 404.
 
 Строка: `id, created_at, actor_type (user|system), actor_id, actor_label, action, target_type, target_id, target_label, entity_id, entity_path, ip, changes`.
 
@@ -34,7 +34,7 @@
 | SLA | `sla_policy.` | `create`, `update`, `delete` |
 | Импорты | `import.` | `import.create` |
 
-Фильтр «Проекты» объединяет три префикса, а API принимает один `action` — либо отдельные пункты по префиксам, либо три запроса не делать: проще дать в группе «Проекты» выбор конкретного действия.
+Группа фильтра = список её префиксов в повторяющемся `action`: «Проекты» → `action=entity.&action=ownership.&action=findings.`.
 
 `actor_type=system` (LDAP-синхронизация состава) — показывать как «Система». `entity_id=null` при непустом `entity_path` — проект удалён.
 
