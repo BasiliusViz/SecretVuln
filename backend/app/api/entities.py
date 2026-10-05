@@ -243,6 +243,7 @@ async def update_entity(
             await _check_parent(db, fields["parent_id"], child_id=entity_id)
         await _ensure_sla_on_move(db, principal, entity, fields["parent_id"])
     renamed = "slug" in fields and fields["slug"] != entity.slug
+    old_parent = await db.get(Entity, entity.parent_id) if moved and entity.parent_id else None
     before = audit.snapshot(entity, audit.FIELDS["entity"])
     for key, value in fields.items():
         setattr(entity, key, value)
@@ -250,7 +251,10 @@ async def update_entity(
         if moved or renamed:
             await refresh_path(db, entity)
         action = audit.ENTITY_MOVE if moved else audit.ENTITY_UPDATE
-        _record_update(db, principal, entity, before, action, audit.client_ip(request))
+        _record_update(
+            db, principal, entity, before, action, audit.client_ip(request),
+            also_for=old_parent if old_parent and not _under(entity, old_parent) else None,
+        )
         if moved:
             # унаследованная политика SLA могла смениться у всего поддерева
             await db.flush()
@@ -294,16 +298,26 @@ def _record_update(
     before: dict,
     action: str,
     ip: str | None,
+    also_for: Entity | None = None,
 ) -> None:
+    """also_for: второй проект, в журнал которого попадает то же событие
+    (старый родитель при переносе — иначе аудитор старой ветки не увидит ухода узла)."""
     after = audit.snapshot(entity, audit.FIELDS["entity"])
     changes = audit.diff(before, after, audit.FIELDS["entity"])
-    if changes:
-        audit.record_audit(
-            db,
-            principal.user,
-            action,
-            target=audit.entity_target(entity),
-            entity=entity,
-            changes=changes,
-            ip=ip,
-        )
+    if not changes:
+        return
+    for where in (entity, also_for):
+        if where is not None:
+            audit.record_audit(
+                db,
+                principal.user,
+                action,
+                target=audit.entity_target(entity),
+                entity=where,
+                changes=changes,
+                ip=ip,
+            )
+
+
+def _under(node: Entity, ancestor: Entity) -> bool:
+    return node.path_cache.startswith(ancestor.path_cache + "/")

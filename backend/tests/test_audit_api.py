@@ -129,7 +129,9 @@ async def test_entity_create_update_move_delete(client, db, admin):
 
     r = await client.patch(f"/api/v1/entities/{svc['id']}", json={"parent_id": b["id"]}, headers=h)
     assert r.status_code == 200
-    (mv,) = await _log(db, audit.ENTITY_MOVE)
+    mv, mv_old = await _log(db, audit.ENTITY_MOVE)
+    assert str(mv.entity_id) == svc["id"] and str(mv_old.entity_id) == a["id"]
+    assert mv_old.changes == mv.changes
     assert mv.changes["path_cache"] == ["a/svc", "b/svc"]
     assert mv.changes["parent_id"] == [a["id"], b["id"]]
 
@@ -144,6 +146,22 @@ async def test_entity_create_update_move_delete(client, db, admin):
     assert (await client.delete(f"/api/v1/entities/{b['id']}", headers=h)).status_code == 204
     root_del = (await _log(db, audit.ENTITY_DELETE))[-1]
     assert root_del.entity_id is None and root_del.target_label == "b"
+
+
+async def test_entity_move_visible_to_old_parent_auditor(client, db, two_teams, admin):
+    t, h = two_teams, admin[1]
+    x = (await client.post("/api/v1/entities", json={"name": "X", "parent_id": str(t.a.id)}, headers=h)).json()
+    deep = (await client.post("/api/v1/entities", json={"name": "Deep", "parent_id": x["id"]}, headers=h)).json()
+    z = (await client.post("/api/v1/entities", json={"name": "Z", "parent_id": x["id"]}, headers=h)).json()
+    # перенос вглубь ветки старого родителя — одна запись, её и так видно из a/x
+    r = await client.patch(f"/api/v1/entities/{deep['id']}", json={"parent_id": z["id"]}, headers=h)
+    assert r.status_code == 200
+    assert len(await _log(db, audit.ENTITY_MOVE)) == 1
+    r = await client.patch(f"/api/v1/entities/{x['id']}", json={"parent_id": str(t.b.id)}, headers=h)
+    assert r.status_code == 200
+    for lead in (t.lead_a, t.lead_b):
+        items = (await client.get("/api/v1/audit", headers=lead[1])).json()["items"]
+        assert any(i["action"] == audit.ENTITY_MOVE and i["target_label"] == "b/x" for i in items)
 
 
 async def test_entity_delete_visible_to_parent_auditor(client, db, two_teams, admin):
