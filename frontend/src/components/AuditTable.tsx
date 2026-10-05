@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
 import { fetchAudit } from "../api/audit";
@@ -18,12 +19,13 @@ function isDiff(key: string, value: unknown): value is [unknown, unknown] {
 }
 
 /** Компактный вывод значения: списки примитивов — через запятую, объекты — JSON */
-function formatValue(value: unknown): string {
+function formatValue(value: unknown, t: TFunction): string {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "boolean") return value ? t("audit.yes") : t("audit.no");
+  if (typeof value === "number") return String(value);
   if (Array.isArray(value) && value.every((v) => v === null || typeof v !== "object")) {
-    return value.length ? value.map((v) => formatValue(v)).join(", ") : "—";
+    return value.length ? value.map((v) => formatValue(v, t)).join(", ") : "—";
   }
   return JSON.stringify(value);
 }
@@ -50,12 +52,12 @@ function Changes({ changes }: { changes: Record<string, unknown> | null }) {
             <tr key={key} style={{ borderTop: "1px solid var(--border)", verticalAlign: "top" }}>
               <td style={{ padding: "4px 8px" }}>{t(`audit.fieldName.${key}`, { defaultValue: key })}</td>
               <td style={{ padding: "4px 8px", ...MONO, wordBreak: "break-word", color: "var(--text-secondary)" }}>
-                {diff ? formatValue(value[0]) : "—"}
+                {diff ? formatValue(value[0], t) : "—"}
               </td>
               <td style={{ padding: "4px 8px", ...MONO, wordBreak: "break-word" }}>
                 {key === "reason" && typeof value === "string"
                   ? t(`audit.reason.${value}`, { defaultValue: value })
-                  : formatValue(diff ? value[1] : value)}
+                  : formatValue(diff ? value[1] : value, t)}
               </td>
             </tr>
           );
@@ -165,9 +167,11 @@ export function AuditTable({ query, showProject = true }: { query: AuditQuery; s
                       <td style={CELL}>{t(`audit.action.${e.action}`, { defaultValue: e.action })}</td>
                       <td style={CELL}>
                         <div>{e.target_label || "—"}</div>
-                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                          {t(`audit.targetType.${e.target_type}`, { defaultValue: e.target_type })}
-                        </div>
+                        {e.target_type && (
+                          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                            {t(`audit.targetType.${e.target_type}`, { defaultValue: e.target_type })}
+                          </div>
+                        )}
                       </td>
                       {showProject && (
                         <td style={{ ...CELL, ...MONO, color: "var(--text-secondary)" }}>

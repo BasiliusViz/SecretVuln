@@ -260,7 +260,7 @@ export interface AuditEntry {
   actor_id: string | null;
   actor_label: string | null;
   action: string;
-  target_type: string;
+  target_type: string | null;
   target_id: string | null;
   target_label: string | null;
   entity_id: string | null;
