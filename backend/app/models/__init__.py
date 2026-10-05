@@ -1,3 +1,4 @@
+from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.decision_request import DecisionRequest, DecisionStatus, DecisionType, ReasonTag
 from app.models.entity import Entity, RepoType
@@ -37,4 +38,5 @@ __all__ = [
     "GroupSource",
     "user_group_members",
     "RoleBinding",
+    "AuditLog",
 ]
