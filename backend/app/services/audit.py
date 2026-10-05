@@ -139,12 +139,13 @@ class Snapshot(dict):
 
 
 def _userinfo_hash(value: Any) -> str | None:
+    """Те же правила, что у `_strip_userinfo`: учётные данные — это username/password."""
     if not isinstance(value, str) or "@" not in value:
         return None
-    netloc = urlsplit(value).netloc
-    if "@" not in netloc:
+    parts = urlsplit(value)
+    if not parts.username and not parts.password:
         return None
-    return hashlib.sha256(netloc.rpartition("@")[0].encode()).hexdigest()
+    return hashlib.sha256(f"{parts.username}:{parts.password}".encode()).hexdigest()
 
 
 def snapshot(obj: Any, fields: Iterable[str]) -> Snapshot:

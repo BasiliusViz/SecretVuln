@@ -43,6 +43,8 @@ function Changes({ action, changes }: { action: string; changes: Record<string, 
   const show = (key: string, v: unknown) => {
     if (TRANSLATED.has(key) && typeof v === "string") return t(`audit.${key}.${v}`, { defaultValue: v });
     // список полей, у которых сменились учётные данные — показываем их названия
+    // причина каскада — действие журнала, переводим тем же словарём, что колонку «Действие»
+    if (key === "cascade" && typeof v === "string") return t(`audit.action.${v}`, { defaultValue: v });
     if (key === "credentials_changed" && Array.isArray(v)) {
       return v.map((f) => t(`audit.fieldName.${f}`, { defaultValue: String(f) })).join(", ");
     }

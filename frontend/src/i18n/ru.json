@@ -586,6 +586,7 @@
       "owner_group": "Группа-владелец",
       "repo_url": "Репозиторий",
       "credentials_changed": "Сменились учётные данные",
+      "cascade": "Удалена вместе с",
       "repo_type": "Тип репозитория",
       "repo_path_prefix": "Префикс пути",
       "sla_policy_id": "Политика SLA (ID)",
