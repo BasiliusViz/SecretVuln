@@ -7,7 +7,7 @@
 
 1. **Модель и миграция `audit_log`** (clock_timestamp, индексы, enum actor_type) — `app/models/audit_log.py`, `app/models/__init__.py`, `migrations/versions/0015_audit_log.py`.
 2. **Сервис `record_audit` + `diff` с белыми списками полей, константы действий** — `app/services/audit.py`, `tests/test_audit_service.py`.
-3. **Право `audit:read` (на поддерево) + встроенные роли Аудитор/Руководитель команды/Администратор** — `app/authz/permissions.py`, `app/cli.py`.
+3. **Право `audit:read` (на поддерево) + встроенные роли Аудитор/Руководитель команды/Администратор** — `app/authz/permissions.py`, `app/cli.py`; тесты: право в каталоге и не `GLOBAL_ONLY`, есть в трёх встроенных ролях после `seed-roles`, привязка на узел даёт `allows` на поддерево и не даёт `is_global` — `tests/test_permissions.py`, `tests/test_access.py`.
 4. **API `GET /audit`: фильтры, видимость (entity_scope / is_global для NULL), 404 на чужой проект** — `app/api/audit.py`, `app/schemas/audit.py`, `app/main.py`, `tests/test_audit_api.py`.
 5. **Вход: login ok / failed (явный коммит до 401), LDAP-синк групп только при изменениях** — `app/api/auth.py`, `tests/test_audit_auth.py`.
 6. **Проекты: create/update/move/delete (delete → родитель), создание по пути при импорте, настройки, правила владельцев, unpin, reassign** — `app/api/entities.py`, `app/api/entity_settings.py`, `app/api/imports.py`, тесты в `tests/test_audit_api.py`.
