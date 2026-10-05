@@ -9,7 +9,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import Integer, case, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Entity, Finding, SlaPolicy
@@ -73,9 +73,13 @@ async def set_status(
 
 
 def _days_case(policy: SlaPolicy):
-    return case(
-        *((Finding.severity == sev, policy.days_for(sev.value)) for sev in Severity),
-        else_=None,
+    # cast: у политики без сроков все ветки NULL, и Postgres вывел бы тип text
+    return cast(
+        case(
+            *((Finding.severity == sev, policy.days_for(sev.value)) for sev in Severity),
+            else_=None,
+        ),
+        Integer,
     )
 
 

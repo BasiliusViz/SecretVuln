@@ -102,6 +102,20 @@ async def test_settings_policy_inheritance_and_subtree_recompute(client, appsec,
     assert f.due_at == T0 + timedelta(days=30)
 
 
+async def test_policy_without_any_days_gives_no_due(client, appsec, db):
+    """Все сроки пустые — CASE из одних NULL; раньше Postgres падал на make_interval(text)."""
+    _, headers = appsec
+    empty = await make_policy(db, "empty", critical=None, high=None, medium=None, low=None)
+    e = await make_entity(db, "p")
+    f = await make_finding(db, e, sla_start_at=T0)
+    r = await client.patch(
+        f"/api/v1/entities/{e.id}/settings", json={"sla_policy_id": str(empty.id)}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    await db.refresh(f)
+    assert f.due_at is None
+
+
 async def test_settings_tags_validation_and_listing(client, appsec, db):
     _, headers = appsec
     root = await make_entity(db, "root")
