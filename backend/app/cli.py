@@ -70,7 +70,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
     ),
     "Аудитор": (
         "Чтение везде + разбор находок",
-        [(r, "read") for r in _R] + [("finding", "triage")],
+        [(r, "read") for r in _R] + [("finding", "triage"), ("audit", "read")],
     ),
     "Инженер ИБ": (
         "Полный доступ к активам, находкам и импортам, одобряет решения по находкам",
@@ -92,6 +92,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("sla", "read"), ("sla", "assign"),
             ("access", "manage"),
             ("group", "read"),
+            ("audit", "read"),
         ],
     ),
     "Администратор": (
@@ -105,6 +106,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("role", "read"), ("role", "write"), ("role", "delete"),
             ("sla", "read"), ("sla", "manage"), ("sla", "assign"),
             ("access", "manage"),
+            ("audit", "read"),
         ],
     ),
 }

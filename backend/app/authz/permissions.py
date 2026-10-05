@@ -6,7 +6,7 @@ p-политики: p, <role>, <resource>, <action>). UI рисует матри
 Роль выдаётся группе привязкой на проект (поддерево) или на всё дерево. Права
 делятся на три вида:
 - действующие на поддерево (`entity:*`, `finding:*`, `import:*`, `sla:assign`,
-  `access:manage`) — проверяются по пути проекта;
+  `access:manage`, `audit:read`) — проверяются по пути проекта;
 - только глобальные (`GLOBAL_ONLY`) — в привязке к проекту игнорируются;
 - из любой привязки (`ANY_BINDING`) — действуют глобально, даже если роль выдана
   на проект: без них команда не назначит находку и не увидит свою SLA-политику.
@@ -23,6 +23,7 @@ CATALOG: dict[str, list[str]] = {
     "role": ["read", "write", "delete"],
     "sla": ["read", "manage", "assign"],
     "access": ["manage"],
+    "audit": ["read"],
 }
 
 RESOURCES: list[str] = list(CATALOG.keys())

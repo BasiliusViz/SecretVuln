@@ -78,3 +78,12 @@ def test_global_reference_perms_do_not_open_tree():
     a = Access.build([("a", "finding", "read"), ("a", "group", "read"), (None, "role", "read")])
     assert a.can_see("a")
     assert not a.can_see("b")
+
+
+def test_audit_read_on_node_covers_subtree_not_global():
+    a = Access.build([("fintech", "audit", "read")])
+    assert a.allows("audit:read", "fintech")
+    assert a.allows("audit:read", "fintech/pay")
+    assert not a.allows("audit:read", "retail")
+    assert not a.is_global("audit:read")
+    assert Access.build([(None, "audit", "read")]).is_global("audit:read")
