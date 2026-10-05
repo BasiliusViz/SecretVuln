@@ -207,3 +207,123 @@ async def test_import_auto_create_logs_entities(client, db, admin):
     )
     assert r.status_code == 201, r.text
     assert [r.target_label for r in await _log(db, audit.ENTITY_CREATE)] == ["n", "n/m"]
+
+
+# --- запись: доступ, группы, роли, SLA ---
+
+
+async def test_groups_and_members(client, db, admin, make_user):
+    _, h = admin
+    member, _ = await make_user("m@test.local")
+    g = (await client.post("/api/v1/groups", json={"name": "Team"}, headers=h)).json()
+    await client.patch(f"/api/v1/groups/{g['id']}", json={"description": "x"}, headers=h)
+    await client.post(f"/api/v1/groups/{g['id']}/members/{member.id}", headers=h)
+    await client.post(f"/api/v1/groups/{g['id']}/members/{member.id}", headers=h)  # повтор
+    await client.delete(f"/api/v1/groups/{g['id']}/members/{member.id}", headers=h)
+    await client.delete(f"/api/v1/groups/{g['id']}", headers=h)
+
+    rows = await _log(db)
+    assert [r.action for r in rows] == [
+        audit.GROUP_CREATE,
+        audit.GROUP_UPDATE,
+        audit.GROUP_MEMBER_ADD,
+        audit.GROUP_MEMBER_REMOVE,
+        audit.GROUP_DELETE,
+    ]
+    assert all(r.entity_id is None and r.target_label == "Team" for r in rows)
+    assert rows[1].changes == {"description": [None, "x"]}
+    assert rows[2].changes == {"user": "m@test.local"}
+
+
+async def test_group_ldap_sync_logs_only_changes(client, db, admin, monkeypatch):
+    from app.services.auth.ldap import LdapMember
+
+    _, h = admin
+    g = (
+        await client.post(
+            "/api/v1/groups", json={"name": "L", "source": "ldap", "ldap_group": "l"}, headers=h
+        )
+    ).json()
+    monkeypatch.setattr(
+        "app.api.groups.list_group_members",
+        lambda name: [LdapMember(dn="uid=x", email="x@test.local", full_name="X")],
+    )
+    for _ in range(2):
+        r = await client.post(f"/api/v1/groups/{g['id']}/sync", headers=h)
+        assert r.status_code == 200
+    (add,) = await _log(db, audit.GROUP_MEMBER_ADD)
+    assert add.actor_id is None and add.changes == {"user": "x@test.local"}
+    (sync,) = await _log(db, audit.GROUP_SYNC)
+    assert sync.actor_id is not None
+    assert sync.changes == {"added": 1, "removed": 0, "provisioned": 1}
+
+
+async def test_roles_and_permissions(client, db, admin):
+    _, h = admin
+    perms = [{"resource": "entity", "action": "read"}]
+    role = (
+        await client.post("/api/v1/roles", json={"name": "R", "permissions": perms}, headers=h)
+    ).json()
+    await client.patch(f"/api/v1/roles/{role['id']}", json={"name": "R2"}, headers=h)
+    new = perms + [{"resource": "audit", "action": "read"}]
+    await client.put(f"/api/v1/roles/{role['id']}/permissions", json={"permissions": new}, headers=h)
+    await client.put(f"/api/v1/roles/{role['id']}/permissions", json={"permissions": new}, headers=h)
+    await client.delete(f"/api/v1/roles/{role['id']}", headers=h)
+
+    rows = await _log(db)
+    assert [r.action for r in rows] == [
+        audit.ROLE_CREATE,
+        audit.ROLE_UPDATE,
+        audit.ROLE_PERMISSIONS_UPDATE,
+        audit.ROLE_DELETE,
+    ]
+    assert rows[0].changes["permissions"] == ["entity:read"]
+    assert rows[1].changes == {"name": ["R", "R2"]}
+    assert rows[2].changes == {"added": ["audit:read"], "removed": []}
+    assert rows[3].changes["permissions"] == ["audit:read", "entity:read"]
+
+
+async def test_bindings_project_and_global(client, db, two_teams, admin):
+    from app.models import Role, UserGroup
+    from sqlalchemy import select
+
+    t = two_teams
+    role = await db.scalar(select(Role).where(Role.name == "Разработчик"))
+    g = UserGroup(name="Devs")
+    db.add(g)
+    await db.commit()
+    body = {"group_id": str(g.id), "role_id": str(role.id)}
+
+    r = await client.post(f"/api/v1/entities/{t.a.id}/bindings", json=body, headers=t.lead_a[1])
+    assert r.status_code == 201, r.text
+    await client.delete(f"/api/v1/bindings/{r.json()['id']}", headers=t.lead_a[1])
+    r = await client.post(
+        f"/api/v1/groups/{g.id}/bindings", json={"role_id": str(role.id)}, headers=admin[1]
+    )
+    assert r.status_code == 201, r.text
+    await client.delete(f"/api/v1/groups/{g.id}/bindings/{r.json()['id']}", headers=admin[1])
+
+    rows = await _log(db)
+    assert [r.action for r in rows] == [audit.BINDING_CREATE, audit.BINDING_DELETE] * 2
+    assert rows[0].entity_id == t.a.id and rows[0].actor_id == t.lead_a[0].id
+    assert rows[0].target_label == "Devs → Разработчик @ a"
+    assert rows[0].changes == {"group": "Devs", "role": "Разработчик", "entity": "a"}
+    assert rows[2].entity_id is None and rows[2].target_label.endswith("@ *")
+    # руководитель a видит выдачу доступа на своей ветке, но не глобальные
+    items = (await client.get("/api/v1/audit", headers=t.lead_a[1])).json()["items"]
+    assert len(items) == 2
+
+
+async def test_sla_policies(client, db, admin):
+    _, h = admin
+    p = (await client.post("/api/v1/sla-policies", json={"name": "S", "days_high": 5}, headers=h)).json()
+    await client.patch(f"/api/v1/sla-policies/{p['id']}", json={"days_high": 7}, headers=h)
+    await client.delete(f"/api/v1/sla-policies/{p['id']}", headers=h)
+    rows = await _log(db)
+    assert [r.action for r in rows] == [
+        audit.SLA_POLICY_CREATE,
+        audit.SLA_POLICY_UPDATE,
+        audit.SLA_POLICY_DELETE,
+    ]
+    assert rows[0].changes["days_high"] == 5
+    assert rows[1].changes == {"days_high": [5, 7]}

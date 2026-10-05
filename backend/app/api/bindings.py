@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from app.api.entities import get_entity_checked
 from app.db.session import get_db
 from app.models import Entity, Role, RoleBinding, UserGroup
 from app.schemas.binding import BindingCreate, BindingRead, EntityBindings, GroupBindingCreate, RoleGrant
+from app.services import audit
 from app.services.bindings import (
     bindings_for_entity,
     is_access_admin,
@@ -59,9 +60,44 @@ async def _check_grant(db: AsyncSession, principal: Principal, role: Role, entit
         raise _too_strong(missing)
 
 
-async def _save(db: AsyncSession, binding: RoleBinding) -> BindingRead:
+def _record(
+    db: AsyncSession,
+    principal: Principal,
+    request: Request,
+    action: str,
+    binding: RoleBinding,
+    group: UserGroup,
+    role: Role,
+    entity: Entity | None,
+) -> None:
+    """Привязка на проект — событие проекта, на всё дерево — глобальное."""
+    where = entity.path_cache if entity is not None else "*"
+    audit.record_audit(
+        db,
+        principal.user,
+        action,
+        target=("binding", binding.id, f"{group.name} → {role.name} @ {where}"),
+        entity=entity,
+        changes={
+            "group": group.name,
+            "role": role.name,
+            "entity": entity.path_cache if entity is not None else None,
+        },
+        ip=audit.client_ip(request),
+    )
+
+
+async def _save(
+    db: AsyncSession, binding: RoleBinding, principal: Principal, request: Request
+) -> BindingRead:
     db.add(binding)
     try:
+        await db.flush()
+        await db.refresh(binding, ["group", "role", "entity"])
+        _record(
+            db, principal, request, audit.BINDING_CREATE,
+            binding, binding.group, binding.role, binding.entity,
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -110,6 +146,7 @@ async def list_entity_bindings(
 async def create_entity_binding(
     entity_id: uuid.UUID,
     data: BindingCreate,
+    request: Request,
     principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> BindingRead:
@@ -128,12 +165,15 @@ async def create_entity_binding(
             entity_id=entity.id,
             created_by=principal.user.id,
         ),
+        principal,
+        request,
     )
 
 
 @router.delete("/bindings/{binding_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_binding(
     binding_id: uuid.UUID,
+    request: Request,
     principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -149,6 +189,10 @@ async def delete_binding(
         if not principal.access.can_see(binding.entity):
             raise not_found("Привязка")
         await _check_grant(db, principal, binding.role, binding.entity)
+    _record(
+        db, principal, request, audit.BINDING_DELETE,
+        binding, binding.group, binding.role, binding.entity,
+    )
     await db.delete(binding)
     await db.commit()
 
@@ -191,6 +235,7 @@ async def list_group_bindings(
 async def create_group_binding(
     group_id: uuid.UUID,
     data: GroupBindingCreate,
+    request: Request,
     principal: Principal = Depends(require_permission("group", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> BindingRead:
@@ -206,6 +251,8 @@ async def create_group_binding(
             entity_id=data.entity_id,
             created_by=principal.user.id,
         ),
+        principal,
+        request,
     )
 
 
@@ -215,11 +262,16 @@ async def create_group_binding(
 async def delete_group_binding(
     group_id: uuid.UUID,
     binding_id: uuid.UUID,
-    _: Principal = Depends(require_permission("group", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("group", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     binding = await db.get(RoleBinding, binding_id)
     if binding is None or binding.group_id != group_id:
         raise not_found("Привязка")
+    _record(
+        db, principal, request, audit.BINDING_DELETE,
+        binding, binding.group, binding.role, binding.entity,
+    )
     await db.delete(binding)
     await db.commit()

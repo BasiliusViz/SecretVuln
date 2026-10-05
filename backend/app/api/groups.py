@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from app.schemas.user_group import (
     SyncResult,
     UserBrief,
 )
+from app.services import audit
 from app.services.access import casbin_rule, ancestors
 from app.services.auth.ldap import LdapError, list_group_members
 
@@ -86,10 +87,30 @@ async def _groups_with_read(db: AsyncSession, entity: Entity) -> set[uuid.UUID]:
     return set(rows)
 
 
+def _record(
+    db: AsyncSession,
+    principal: Principal | None,
+    request: Request,
+    action: str,
+    group: UserGroup,
+    changes: dict,
+) -> None:
+    """Группы — глобальные объекты: события без проекта. `principal=None` — система."""
+    audit.record_audit(
+        db,
+        principal.user if principal else None,
+        action,
+        target=("group", group.id, group.name),
+        changes=changes,
+        ip=audit.client_ip(request) if principal else None,
+    )
+
+
 @router.post("/groups", response_model=GroupDetail, status_code=status.HTTP_201_CREATED)
 async def create_group(
     data: GroupCreate,
-    _: object = Depends(require_permission("group", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("group", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> GroupDetail:
     try:
@@ -109,6 +130,9 @@ async def create_group(
     )
     db.add(group)
     try:
+        await db.flush()
+        _record(db, principal, request, audit.GROUP_CREATE, group,
+                audit.snapshot(group, audit.FIELDS["group"]))
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -132,10 +156,12 @@ async def get_group(
 async def update_group(
     group_id: uuid.UUID,
     data: GroupUpdate,
-    _: object = Depends(require_permission("group", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("group", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> GroupDetail:
     group = await _get_or_404(group_id, db)
+    before = audit.snapshot(group, audit.FIELDS["group"])
     fields = data.model_dump(exclude_unset=True)
     if "name" in fields and fields["name"]:
         group.name = fields["name"].strip()
@@ -143,6 +169,9 @@ async def update_group(
         group.description = (fields["description"] or "").strip() or None
     if "ldap_group" in fields and group.source == GroupSource.ldap:
         group.ldap_group = (fields["ldap_group"] or group.name).strip()
+    changes = audit.diff(before, audit.snapshot(group, audit.FIELDS["group"]), audit.FIELDS["group"])
+    if changes:
+        _record(db, principal, request, audit.GROUP_UPDATE, group, changes)
     try:
         await db.commit()
     except IntegrityError:
@@ -156,10 +185,13 @@ async def update_group(
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: uuid.UUID,
-    _: object = Depends(require_permission("group", "delete")),
+    request: Request,
+    principal: Principal = Depends(require_permission("group", "delete")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     group = await _get_or_404(group_id, db)
+    _record(db, principal, request, audit.GROUP_DELETE, group,
+            audit.snapshot(group, audit.FIELDS["group"]))
     await db.delete(group)
     await db.commit()
 
@@ -168,7 +200,8 @@ async def delete_group(
 async def add_member(
     group_id: uuid.UUID,
     user_id: uuid.UUID,
-    _: object = Depends(require_permission("group", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("group", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> GroupDetail:
     group = await _get_or_404(group_id, db)
@@ -181,6 +214,7 @@ async def add_member(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
     if user not in group.members:
         group.members.append(user)
+        _record(db, principal, request, audit.GROUP_MEMBER_ADD, group, {"user": user.email})
         await db.commit()
         await db.refresh(group)
     members = [UserBrief.model_validate(u) for u in group.members]
@@ -191,7 +225,8 @@ async def add_member(
 async def remove_member(
     group_id: uuid.UUID,
     user_id: uuid.UUID,
-    _: object = Depends(require_permission("group", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("group", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> GroupDetail:
     group = await _get_or_404(group_id, db)
@@ -202,6 +237,7 @@ async def remove_member(
     user = await db.get(User, user_id)
     if user is not None and user in group.members:
         group.members.remove(user)
+        _record(db, principal, request, audit.GROUP_MEMBER_REMOVE, group, {"user": user.email})
         await db.commit()
         await db.refresh(group)
     members = [UserBrief.model_validate(u) for u in group.members]
@@ -211,7 +247,8 @@ async def remove_member(
 @router.post("/groups/{group_id}/sync", response_model=SyncResult)
 async def sync_group(
     group_id: uuid.UUID,
-    _: object = Depends(require_permission("group", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("group", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> SyncResult:
     group = await _get_or_404(group_id, db)
@@ -243,17 +280,24 @@ async def sync_group(
     current = {u.id: u for u in group.members}
     desired_ids = {u.id for u in desired}
 
+    # состав меняет LDAP — события участников от имени системы, запуск — от пользователя
     added = 0
     for user in desired:
         if user.id not in current:
             group.members.append(user)
+            _record(db, None, request, audit.GROUP_MEMBER_ADD, group, {"user": user.email})
             added += 1
 
     removed = 0
     for uid, user in list(current.items()):
         if uid not in desired_ids:
             group.members.remove(user)
+            _record(db, None, request, audit.GROUP_MEMBER_REMOVE, group, {"user": user.email})
             removed += 1
+
+    if added or removed or provisioned:
+        _record(db, principal, request, audit.GROUP_SYNC, group,
+                {"added": added, "removed": removed, "provisioned": provisioned})
 
     group.last_synced_at = datetime.now(timezone.utc)
     await db.commit()

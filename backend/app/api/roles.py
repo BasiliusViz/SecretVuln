@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_permission
+from app.api.deps import Principal, require_permission
 from app.authz import permissions as perms
 from app.authz.enforcer import (
     delete_role_policies,
@@ -19,6 +19,7 @@ from app.authz.enforcer import (
 )
 from app.db.session import get_db
 from app.models import Role
+from app.services import audit
 from app.schemas.role import (
     Permission,
     PermissionsUpdate,
@@ -59,6 +60,24 @@ def _validate(perm_list: list[Permission]) -> list[tuple[str, str]]:
     return out
 
 
+def _perm_list(pairs) -> list[str]:
+    return sorted(f"{r}:{a}" for r, a in pairs)
+
+
+def _record(
+    db: AsyncSession, principal: Principal, request: Request, action: str, role: Role, changes: dict
+) -> None:
+    """Роли — глобальные объекты: события без проекта."""
+    audit.record_audit(
+        db,
+        principal.user,
+        action,
+        target=("role", role.id, role.name),
+        changes=changes,
+        ip=audit.client_ip(request),
+    )
+
+
 @router.get("/permissions/catalog")
 async def permission_catalog(_: object = Depends(require_permission("role", "read"))) -> dict:
     """Каталог для UI: ресурс → допустимые действия, какие права только глобальные."""
@@ -82,13 +101,19 @@ async def list_roles(
 @router.post("/roles", response_model=RoleRead, status_code=status.HTTP_201_CREATED)
 async def create_role(
     data: RoleCreate,
-    _: object = Depends(require_permission("role", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("role", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> RoleRead:
     validated = _validate(data.permissions)
     role = Role(name=data.name.strip(), description=(data.description or "").strip() or None)
     db.add(role)
     try:
+        await db.flush()
+        _record(db, principal, request, audit.ROLE_CREATE, role, {
+            **audit.snapshot(role, audit.FIELDS["role"]),
+            "permissions": _perm_list(validated),
+        })
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -111,17 +136,22 @@ async def get_role(
 async def update_role(
     role_id: uuid.UUID,
     data: RoleUpdate,
-    _: object = Depends(require_permission("role", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("role", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> RoleRead:
     role = await _get_or_404(role_id, db)
     if role.is_builtin and data.name and data.name.strip() != role.name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Встроенную роль нельзя переименовать")
     old_name = role.name
+    before = audit.snapshot(role, audit.FIELDS["role"])
     if data.name and data.name.strip():
         role.name = data.name.strip()
     if data.description is not None:
         role.description = data.description.strip() or None
+    changes = audit.diff(before, audit.snapshot(role, audit.FIELDS["role"]), audit.FIELDS["role"])
+    if changes:
+        _record(db, principal, request, audit.ROLE_UPDATE, role, changes)
     try:
         await db.commit()
     except IntegrityError:
@@ -137,11 +167,20 @@ async def update_role(
 async def set_permissions(
     role_id: uuid.UUID,
     data: PermissionsUpdate,
-    _: object = Depends(require_permission("role", "write")),
+    request: Request,
+    principal: Principal = Depends(require_permission("role", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> RoleRead:
     role = await _get_or_404(role_id, db)
     validated = _validate(data.permissions)
+    before = set(_perm_list(role_permissions(role.name)))
+    after = set(_perm_list(validated))
+    if before != after:
+        _record(db, principal, request, audit.ROLE_PERMISSIONS_UPDATE, role, {
+            "added": sorted(after - before),
+            "removed": sorted(before - after),
+        })
+        await db.commit()
     set_role_permissions(role.name, validated)
     return _to_read(role)
 
@@ -149,12 +188,17 @@ async def set_permissions(
 @router.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role(
     role_id: uuid.UUID,
-    _: object = Depends(require_permission("role", "delete")),
+    request: Request,
+    principal: Principal = Depends(require_permission("role", "delete")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     role = await _get_or_404(role_id, db)
     if role.is_builtin:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Встроенную роль нельзя удалить")
+    _record(db, principal, request, audit.ROLE_DELETE, role, {
+        **audit.snapshot(role, audit.FIELDS["role"]),
+        "permissions": _perm_list(role_permissions(role.name)),
+    })
     delete_role_policies(role.name)
     await db.delete(role)
     await db.commit()

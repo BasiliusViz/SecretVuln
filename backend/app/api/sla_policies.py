@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_permission
+from app.api.deps import Principal, require_permission
 from app.db.session import get_db
 from app.models import Entity, SlaPolicy
 from app.schemas.sla_policy import SlaPolicyCreate, SlaPolicyRead, SlaPolicyUpdate
+from app.services import audit
 from app.services.finding_state import recompute_for_policy
 
 router = APIRouter(prefix="/api/v1/sla-policies", tags=["sla"])
@@ -77,10 +78,30 @@ async def list_policies(
     ]
 
 
+def _record(
+    db: AsyncSession,
+    principal: Principal,
+    request: Request,
+    action: str,
+    policy: SlaPolicy,
+    changes: dict,
+) -> None:
+    """Политики SLA — глобальный справочник: события без проекта."""
+    audit.record_audit(
+        db,
+        principal.user,
+        action,
+        target=("sla_policy", policy.id, policy.name),
+        changes=changes,
+        ip=audit.client_ip(request),
+    )
+
+
 @router.post("", response_model=SlaPolicyRead, status_code=status.HTTP_201_CREATED)
 async def create_policy(
     data: SlaPolicyCreate,
-    _: object = Depends(require_permission("sla", "manage")),
+    request: Request,
+    principal: Principal = Depends(require_permission("sla", "manage")),
     db: AsyncSession = Depends(get_db),
 ) -> SlaPolicyRead:
     policy = SlaPolicy(**data.model_dump(exclude={"is_default"}), is_default=False)
@@ -93,6 +114,7 @@ async def create_policy(
     if data.is_default:
         await _make_default(db, policy)
         await recompute_for_policy(db, policy.id)
+    _record(db, principal, request, audit.SLA_POLICY_CREATE, policy, audit.snapshot(policy, audit.FIELDS["sla_policy"]))
     await _commit(db)
     return await _to_read(db, policy)
 
@@ -101,7 +123,8 @@ async def create_policy(
 async def update_policy(
     policy_id: uuid.UUID,
     data: SlaPolicyUpdate,
-    _: object = Depends(require_permission("sla", "manage")),
+    request: Request,
+    principal: Principal = Depends(require_permission("sla", "manage")),
     db: AsyncSession = Depends(get_db),
 ) -> SlaPolicyRead:
     policy = await _get_or_404(db, policy_id)
@@ -114,6 +137,7 @@ async def update_policy(
     if "name" in fields and fields["name"] is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Название не может быть пустым")
 
+    before = audit.snapshot(policy, audit.FIELDS["sla_policy"])
     days_changed = any(
         key in DAY_FIELDS and getattr(policy, key) != value for key, value in fields.items()
     )
@@ -131,6 +155,9 @@ async def update_policy(
         await _make_default(db, policy)
     if days_changed or became_default:
         await recompute_for_policy(db, policy.id)
+    changes = audit.diff(before, audit.snapshot(policy, audit.FIELDS["sla_policy"]), audit.FIELDS["sla_policy"])
+    if changes:
+        _record(db, principal, request, audit.SLA_POLICY_UPDATE, policy, changes)
     await _commit(db)
     return await _to_read(db, policy)
 
@@ -138,7 +165,8 @@ async def update_policy(
 @router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_policy(
     policy_id: uuid.UUID,
-    _: object = Depends(require_permission("sla", "manage")),
+    request: Request,
+    principal: Principal = Depends(require_permission("sla", "manage")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     policy = await _get_or_404(db, policy_id)
@@ -149,5 +177,6 @@ async def delete_policy(
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Политика назначена проектам ({used}) — сначала смените её у них"
         )
+    _record(db, principal, request, audit.SLA_POLICY_DELETE, policy, audit.snapshot(policy, audit.FIELDS["sla_policy"]))
     await db.delete(policy)
     await db.commit()
