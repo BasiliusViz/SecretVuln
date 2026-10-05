@@ -40,6 +40,8 @@ function formatValue(value: unknown, t: TFunction): string {
 function Changes({ action, changes }: { action: string; changes: Record<string, unknown> | null }) {
   const { t } = useTranslation();
   const entries = Object.entries(changes ?? {});
+  const show = (key: string, v: unknown) =>
+    TRANSLATED.has(key) && typeof v === "string" ? t(`audit.${key}.${v}`, { defaultValue: v }) : formatValue(v, t);
   if (entries.length === 0) {
     return <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{t("audit.noChanges")}</div>;
   }
@@ -59,12 +61,10 @@ function Changes({ action, changes }: { action: string; changes: Record<string, 
             <tr key={key} style={{ borderTop: "1px solid var(--border)", verticalAlign: "top" }}>
               <td style={{ padding: "4px 8px" }}>{t(`audit.fieldName.${key}`, { defaultValue: key })}</td>
               <td style={{ padding: "4px 8px", ...MONO, wordBreak: "break-word", color: "var(--text-secondary)" }}>
-                {diff ? formatValue(value[0], t) : "—"}
+                {diff ? show(key, value[0]) : "—"}
               </td>
               <td style={{ padding: "4px 8px", ...MONO, wordBreak: "break-word" }}>
-                {TRANSLATED.has(key) && typeof value === "string"
-                  ? t(`audit.${key}.${value}`, { defaultValue: value })
-                  : formatValue(diff ? value[1] : value, t)}
+                {show(key, diff ? value[1] : value)}
               </td>
             </tr>
           );

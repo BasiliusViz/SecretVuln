@@ -116,10 +116,8 @@ def _strip_userinfo(value: Any) -> Any:
     parts = urlsplit(value)
     if not parts.username and not parts.password:
         return value
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return urlunsplit(parts._replace(netloc=host))
+    # netloc после «@», а не hostname: у IPv6 сохраняются скобки
+    return urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
 
 
 def snapshot(obj: Any, fields: Iterable[str]) -> dict[str, Any]:

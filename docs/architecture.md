@@ -77,6 +77,16 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - **Фронтенд**: `useCan(perm, path)` по `/auth/me.scoped_permissions` (путь `"*"` — глобально); вкладка проекта «Доступ» (`pages/ProjectAccess.tsx`); привязки «роль → область» в «Группах»; значок «только глобально» в «Ролях»
 - Спека: `docs/superpowers/specs/2026-10-05-subtree-access-design.md`
 
+## Журнал аудита (этап 5а — РЕАЛИЗОВАН)
+
+- Таблица `audit_log` (миграция `0015`): кто (`actor_type` user/system, `actor_label`), действие (`entity.update`, `binding.create`…, полный список — `ACTIONS` в `services/audit.py`), объект, проект (`entity_id` + `entity_path`, после удаления проекта `entity_id=NULL`, путь остаётся), IP, `changes`.
+- Запись — `record_audit` в той же транзакции, что и изменение (откат убирает и запись). `changes`: `{поле: [было, стало]}` для правок (`diff`), снимок полей для create/delete (`snapshot`). Поля — только из белых списков `FIELDS`; пароли/токены отсекаются, из `*_url` вырезаются учётные данные.
+- Импорт с `.secretvuln.yml` пишет `entity.settings_update` / `ownership.rules_update` с `source: "config"`.
+- Чтение: `GET /api/v1/audit`, право `audit:read` на поддерево; глобальные события (без проекта) — только при глобальном праве. Фильтр `action` — точно или префикс `binding.`, повторяется (ИЛИ).
+- Сторож `tests/test_audit_coverage.py`: новый POST/PUT/PATCH/DELETE без `record_audit(` роняет тест, исключения — в `EXEMPT` с причиной.
+- UI: страница `/audit` (фильтры: период, кто, группа действий, проект), вкладка «Журнал» в настройках проекта; `components/AuditTable.tsx` различает снимок/разницу по действию (`*.create`/`*.delete` — снимок). Импорты: «Загрузил», «Только мои» (`?uploaded_by=me`).
+- Бэклог: `binding.delete` при каскадном удалении группы/роли не пишется; `entity.move` не виден аудитору старого поддерева; в `changes` сырые UUID групп/политик; смена только токена в `repo_url` не пишется (diff по очищенному URL); в `roles.set_permissions` Casbin применяется до коммита записи — при падении коммита права изменятся без записи.
+
 ## Локализация и дизайн (см. frontend/DESIGN.md)
 
 Продукт для русскоязычного рынка: **весь UI на русском** (react-i18next, плюрализация «находка/находки/находок», даты DD.MM.YYYY, локаль ru-RU). Код, API, enum-значения в БД — на английском, перевод только на фронтенде; словарь терминов и таблица переводов enum'ов — в frontend/DESIGN.md.
@@ -98,4 +108,4 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 
 **Casbin/RBAC (фаза 1) — сделано end-to-end**: конструктор ролей (матрица прав), роли→группы, enforcement на всех эндпоинтах, роли в JWT из групп. Проверено: без токена 401, суперюзер обходит, bob (LDAP→группа→роль «Аудитор») читает находки/роли, но create group → 403. Bootstrap-админ `admin@secretvuln.local`, встроенные роли засижены.
 
-Дальше по MVP: агрегация по поддереву (recursive CTE), привязка прав к поддереву активов (Casbin-домены, фаза 2), дашборд-виджеты (Recharts), аудит-лог + `uploaded_by`, Helm chart.
+Дальше по MVP: агрегация по поддереву (recursive CTE), привязка прав к поддереву активов (Casbin-домены, фаза 2), дашборд-виджеты (Recharts), Helm chart. Аудит-лог + `uploaded_by` — сделано на этапе 5а.

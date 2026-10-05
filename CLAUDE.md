@@ -55,6 +55,7 @@ Vulnerability management платформа: импорт находок без�
 | `services/decisions.py` | Создание, одобрение, отклонение запросов |
 | `services/risk_expiry.py` | Истечение принятого риска |
 | `services/sarif/` | `parser.py` (разбор + `versionControlProvenance`), `normalizers.py` (severity по сканерам) |
+| `services/audit.py` | `record_audit`, `snapshot`/`diff`, белые списки `FIELDS`, список действий |
 | `services/storage.py` | Хранилище SARIF: диск или S3/MinIO по `SV_STORAGE_BACKEND` |
 | `worker.py` | ARQ: `process_import`, cron `expire_risks` |
 | `cli.py` | `create-admin`, `seed-roles` (там же список встроенных ролей) |
@@ -70,7 +71,8 @@ Vulnerability management платформа: импорт находок без�
 | `theme/themes.ts`, `theme/ThemeContext.tsx` | Список тем и их состояние |
 | `theme/severity.ts` | Цвета критичности из переменных темы (`useSeverityColors`) |
 | `i18n/ru.json` | **Все строки интерфейса** |
-| `pages/` | `Dashboard`, `Assets` (раздел «Проекты»), `Findings` (раздел «Уязвимости»), `Imports`, `Groups`, `Roles`, `Login` |
+| `pages/` | `Dashboard`, `Assets` (раздел «Проекты»), `Findings` (раздел «Уязвимости»), `Imports`, `Groups`, `Roles`, `Audit` (журнал аудита), `Login` |
+| `components/AuditTable.tsx` | Таблица журнала: раскрытие изменений, пагинация (страница `/audit` и вкладка проекта) |
 | `api/client.ts` | `apiFetch`: Bearer-токен, редирект на логин при 401 |
 
 ## Конвенции
@@ -88,7 +90,8 @@ Vulnerability management платформа: импорт находок без�
 - **Этапы 1–2** — в `main`, запушены в `github.com/BasiliusViz/SecretVuln`. **Этап 3 «Сроки и метрики»** — сделан и прошёл ревью, в `main`, запушен: SLA-политики и `due_at`, теги проектов, просрочки, «Шумные правила», метрики на дашборде (`POST /metrics/aggregate`).
 - Открыто по этапу 3: переоткрытие обнуляет `resolved_at`, поэтому `resolved`/`mttr_days` задним числом теряют прошлые закрытия (по спеке; позже — брать из `finding_events`).
 - **Этап 4 «Права на поддерево»** — сделан, прошёл ревью, в `main`: привязки группа+роль+проект (`role_bindings`), заглушки предков в дереве, делегирование `access:manage`, `sla:assign`, вкладка проекта «Доступ». Подробно — `docs/architecture.md`, раздел «Авторизация».
-- Бэклог MVP: дашборд-виджеты, аудит-лог + `uploaded_by`, Helm chart.
+- **Этап 5а «Журнал аудита»** — сделан, прошёл ревью, в `main`: `audit_log` + `record_audit`, `GET /audit` с правом `audit:read` на поддерево, сторож покрытия мутаций, страница `/audit`, вкладка проекта «Журнал», «Загрузил» в импортах. Подробно — `docs/architecture.md`, раздел «Журнал аудита».
+- Бэклог MVP: дашборд-виджеты, Helm chart; хвосты аудита — в `docs/architecture.md`.
 
 ## Документы
 

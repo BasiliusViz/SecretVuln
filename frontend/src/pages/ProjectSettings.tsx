@@ -257,7 +257,7 @@ export function ProjectSettings() {
           { id: "access", label: t("access.tab") },
           ...(canAudit ? [{ id: "audit" as const, label: t("audit.tab") }] : []),
         ]}
-        value={tab}
+        value={tab === "audit" && !canAudit ? "settings" : tab}
         onChange={setTab}
       />
       {tab === "audit" && canAudit ? (

@@ -95,3 +95,5 @@ def test_snapshot_strips_credentials_from_urls():
 
     obj = SimpleNamespace(repo_url="https://user:tok@git.corp:8443/a/b", name="x@y")
     assert snapshot(obj, ("repo_url", "name")) == {"repo_url": "https://git.corp:8443/a/b", "name": "x@y"}
+    v6 = SimpleNamespace(repo_url="https://u:p@[::1]:8080/x")
+    assert snapshot(v6, ("repo_url",)) == {"repo_url": "https://[::1]:8080/x"}
