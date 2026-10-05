@@ -2,23 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { apiFetch } from "../api/client";
+import type { ImportRecord } from "../api/types";
 
 interface EntityNode {
   id: string;
   name: string;
   parent_id: string | null;
-}
-
-interface ImportRecord {
-  id: string;
-  entity_id: string;
-  filename: string;
-  scanner: string | null;
-  status: string;
-  stats: { created?: number; updated?: number; duplicates?: number; total_results?: number };
-  error: string | null;
-  created_at: string;
-  finished_at: string | null;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -35,6 +24,7 @@ export function Imports() {
   const [selectedEntity, setSelectedEntity] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [onlyMine, setOnlyMine] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadEntities = useCallback(() => {
@@ -42,8 +32,11 @@ export function Imports() {
   }, []);
 
   const loadImports = useCallback(() => {
-    apiFetch("/api/v1/imports").then((r) => r.json()).then(setImports).catch(() => {});
-  }, []);
+    apiFetch(onlyMine ? "/api/v1/imports?uploaded_by=me" : "/api/v1/imports")
+      .then((r) => r.json())
+      .then(setImports)
+      .catch(() => {});
+  }, [onlyMine]);
 
   useEffect(() => {
     loadEntities();
@@ -120,6 +113,11 @@ export function Imports() {
         )}
       </div>
 
+      <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+        <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} />
+        {t("imports.onlyMine")}
+      </label>
+
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         {imports.length === 0 ? (
           <p style={{ color: "var(--text-muted)", margin: 0, padding: 16 }}>
@@ -134,6 +132,7 @@ export function Imports() {
                 <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("imports.scanner")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("status.label")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("imports.stats")}</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("imports.uploadedBy")}</th>
                 <th style={{ padding: "8px 12px", fontWeight: 500 }}>{t("imports.uploadedAt")}</th>
               </tr>
             </thead>
@@ -154,6 +153,9 @@ export function Imports() {
                       : imp.error
                         ? imp.error.slice(0, 80)
                         : "—"}
+                  </td>
+                  <td style={{ padding: "8px 12px", color: "var(--text-secondary)" }}>
+                    {imp.uploaded_by ? imp.uploaded_by.display_name || imp.uploaded_by.email : "—"}
                   </td>
                   <td style={{ padding: "8px 12px", color: "var(--text-muted)", fontSize: 12 }}>
                     {new Date(imp.created_at).toLocaleString("ru-RU")}
