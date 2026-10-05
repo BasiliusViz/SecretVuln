@@ -97,3 +97,22 @@ def test_snapshot_strips_credentials_from_urls():
     assert snapshot(obj, ("repo_url", "name")) == {"repo_url": "https://git.corp:8443/a/b", "name": "x@y"}
     v6 = SimpleNamespace(repo_url="https://u:p@[::1]:8080/x")
     assert snapshot(v6, ("repo_url",)) == {"repo_url": "https://[::1]:8080/x"}
+
+
+def test_diff_marks_url_credentials_change_without_leaking():
+    from types import SimpleNamespace
+
+    from app.services.audit import diff, snapshot
+
+    fields = ("repo_url",)
+    snap = lambda url: snapshot(SimpleNamespace(repo_url=url), fields)  # noqa: E731
+    old = snap("https://ci:tok1@git.example/x.git")
+    # сменился только токен — очищенный URL тот же, но признак есть
+    changes = diff(old, snap("https://ci:tok2@git.example/x.git"), fields)
+    assert changes == {"credentials_changed": ["repo_url"]}
+    assert "tok" not in repr(changes) and "tok" not in repr(dict(old))
+    # учётные данные убрали — тоже смена
+    assert diff(old, snap("https://git.example/x.git"), fields) == {"credentials_changed": ["repo_url"]}
+    # без смены — пусто; обычные dict — как раньше, без признака
+    assert diff(old, snap("https://ci:tok1@git.example/x.git"), fields) == {}
+    assert diff(dict(old), {"repo_url": "https://git.example/x.git"}, fields) == {}

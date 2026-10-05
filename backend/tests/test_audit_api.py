@@ -220,6 +220,13 @@ async def test_settings_rules_unpin_reassign(client, db, admin):
     s3 = (await _log(db, audit.ENTITY_SETTINGS_UPDATE))[-1]
     assert s3.changes["sla_policy"] == [None, "Strict"]
 
+    for token in ("t1", "t2"):
+        url = f"https://ci:{token}@git.example/p.git"
+        r = await client.patch(f"{base}/settings", json={"repo_url": url}, headers=h)
+        assert r.status_code == 200, r.text
+    s4 = (await _log(db, audit.ENTITY_SETTINGS_UPDATE))[-1]
+    assert s4.changes == {"credentials_changed": ["repo_url"]}
+
     r = await client.post(f"{base}/settings/unpin", json={"field": "default_branch"}, headers=h)
     assert r.status_code == 200
     (u,) = await _log(db, audit.ENTITY_UNPIN)

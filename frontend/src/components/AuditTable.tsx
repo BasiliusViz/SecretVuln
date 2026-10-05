@@ -9,7 +9,7 @@ import { MONO, formatDateTime } from "./ui";
 const PAGE_SIZE = 50;
 
 // Ключи, у которых массив из двух элементов — это список, а не пара «было/стало»
-const VALUE_KEYS = new Set(["added", "removed", "permissions"]);
+const VALUE_KEYS = new Set(["added", "removed", "permissions", "credentials_changed"]);
 // Значения, которые переводим по словарю, а не выводим как есть
 const TRANSLATED = new Set(["reason", "source"]);
 
@@ -40,8 +40,14 @@ function formatValue(value: unknown, t: TFunction): string {
 function Changes({ action, changes }: { action: string; changes: Record<string, unknown> | null }) {
   const { t } = useTranslation();
   const entries = Object.entries(changes ?? {});
-  const show = (key: string, v: unknown) =>
-    TRANSLATED.has(key) && typeof v === "string" ? t(`audit.${key}.${v}`, { defaultValue: v }) : formatValue(v, t);
+  const show = (key: string, v: unknown) => {
+    if (TRANSLATED.has(key) && typeof v === "string") return t(`audit.${key}.${v}`, { defaultValue: v });
+    // список полей, у которых сменились учётные данные — показываем их названия
+    if (key === "credentials_changed" && Array.isArray(v)) {
+      return v.map((f) => t(`audit.fieldName.${f}`, { defaultValue: String(f) })).join(", ");
+    }
+    return formatValue(v, t);
+  };
   if (entries.length === 0) {
     return <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{t("audit.noChanges")}</div>;
   }

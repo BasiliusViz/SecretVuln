@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import enum
+import hashlib
 import uuid
 from datetime import date, datetime
 from typing import Any, Iterable
@@ -129,21 +130,54 @@ def _strip_userinfo(value: Any) -> Any:
     return urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
 
 
-def snapshot(obj: Any, fields: Iterable[str]) -> dict[str, Any]:
+class Snapshot(dict):
+    """Снимок полей. `userinfo` — отпечатки учётных данных из `*_url`: живут только в
+    памяти (в журнал попадает сам dict), нужны `diff`, чтобы заметить смену токена
+    при том же очищенном URL."""
+
+    userinfo: dict[str, str | None]
+
+
+def _userinfo_hash(value: Any) -> str | None:
+    if not isinstance(value, str) or "@" not in value:
+        return None
+    netloc = urlsplit(value).netloc
+    if "@" not in netloc:
+        return None
+    return hashlib.sha256(netloc.rpartition("@")[0].encode()).hexdigest()
+
+
+def snapshot(obj: Any, fields: Iterable[str]) -> Snapshot:
     """Значения разрешённых полей объекта в JSON-виде (для create/delete и как `before`)."""
-    return {
-        f: _json(_strip_userinfo(getattr(obj, f, None)) if f.endswith("_url") else getattr(obj, f, None))
-        for f in _allowed(fields)
-    }
+    out = Snapshot()
+    out.userinfo = {}
+    for f in _allowed(fields):
+        value = getattr(obj, f, None)
+        if f.endswith("_url"):
+            out.userinfo[f] = _userinfo_hash(value)
+            value = _strip_userinfo(value)
+        out[f] = _json(value)
+    return out
 
 
 def diff(before: dict[str, Any], after: dict[str, Any], fields: Iterable[str]) -> dict[str, list]:
-    """`{поле: [было, стало]}` только по разрешённым и реально изменившимся полям."""
-    out: dict[str, list] = {}
+    """`{поле: [было, стало]}` только по разрешённым и реально изменившимся полям.
+
+    Если оба — `Snapshot` и в `*_url` сменились учётные данные, добавляется
+    `credentials_changed: [поля]` (самих данных в журнале нет).
+    """
+    out: dict[str, Any] = {}
     for f in _allowed(fields):
         old, new = _json(before.get(f)), _json(after.get(f))
         if old != new:
             out[f] = [old, new]
+    if isinstance(before, Snapshot) and isinstance(after, Snapshot):
+        changed = [
+            f for f in _allowed(fields)
+            if f in before.userinfo and before.userinfo.get(f) != after.userinfo.get(f)
+        ]
+        if changed:
+            out["credentials_changed"] = changed
     return out
 
 
