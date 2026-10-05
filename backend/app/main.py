@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.bindings import router as bindings_router
 from app.api.decisions import router as decisions_router
@@ -51,6 +52,7 @@ app.include_router(bindings_router)
 app.include_router(roles_router)
 app.include_router(sla_policies_router)
 app.include_router(metrics_router)
+app.include_router(audit_router)
 
 
 @app.get("/api/v1/health", tags=["health"])
