@@ -6,9 +6,10 @@ export interface CurrentUser {
   full_name: string | null;
   auth_source: string;
   is_superuser: boolean;
-  roles: string[];
-  // Права вида "finding:approve" — считает бэкенд (/auth/me), у суперюзера все
+  // Права вида "finding:approve", которые есть хоть где-то, — для меню
   permissions: string[];
+  // Где действует право: "*" — везде, иначе пути проектов (с поддеревьями)
+  scoped_permissions: Record<string, "*" | string[]>;
 }
 
 interface AuthState {
@@ -100,11 +101,24 @@ export function useAuth(): AuthState {
   return ctx;
 }
 
-/** Проверка права текущего пользователя, например can("finding:approve"). */
-export function useCan(): (permission: string) => boolean {
+/**
+ * Проверка права текущего пользователя: can("finding:approve") — есть ли хоть где-то,
+ * can("finding:approve", "fintech/payments") — действует ли на проекте с этим путём,
+ * can("entity:write", "*") — действует ли на всё дерево (например, создать корневой проект).
+ * Только подсказка для кнопок: решает бэкенд (после переноса проекта пути устаревают до перезагрузки /me).
+ */
+export function useCan(): (permission: string, path?: string | null) => boolean {
   const { user } = useAuth();
   return useCallback(
-    (permission: string) => !!user && user.permissions.includes(permission),
+    (permission: string, path?: string | null) => {
+      if (!user) return false;
+      if (path == null) return user.permissions.includes(permission);
+      const scope = user.scoped_permissions?.[permission];
+      if (!scope) return false;
+      if (scope === "*") return true;
+      if (path === "*") return false;
+      return scope.some((p) => path === p || path.startsWith(p + "/"));
+    },
     [user],
   );
 }

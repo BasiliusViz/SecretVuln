@@ -3,13 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { apiFetch } from "../api/client";
-
-interface EntityNode {
-  id: string;
-  name: string;
-  parent_id: string | null;
-  description: string | null;
-}
+import type { EntityNode } from "../api/types";
+import { useCan } from "../auth/AuthContext";
 
 function useEntities() {
   const [items, setItems] = useState<EntityNode[] | null>(null);
@@ -117,6 +112,7 @@ function TreeNode({
   onDelete: (node: EntityNode) => void;
 }) {
   const { t } = useTranslation();
+  const can = useCan();
   const children = childrenMap.get(node.id) ?? [];
   return (
     <>
@@ -133,7 +129,13 @@ function TreeNode({
         <span aria-hidden="true" style={{ color: "var(--text-muted)", fontSize: 12 }}>
           {children.length > 0 ? "▸" : "·"}
         </span>
-        <span style={{ fontWeight: 500 }}>{node.name}</span>
+        {node.stub ? (
+          <span style={{ color: "var(--text-muted)" }} title={t("projects.stubHint")}>
+            {node.name}
+          </span>
+        ) : (
+          <span style={{ fontWeight: 500 }}>{node.name}</span>
+        )}
         {node.description && (
           <span
             style={{
@@ -149,21 +151,27 @@ function TreeNode({
             {node.description}
           </span>
         )}
+        {!node.stub && (
         <span style={{ marginLeft: "auto", display: "flex", gap: 6, flexShrink: 0 }}>
           <Link to={`/projects/${node.id}/settings`} style={{ fontSize: 12, padding: "2px 10px" }}>
             {t("settings.open")}
           </Link>
-          <button style={{ fontSize: 12, padding: "2px 10px" }} onClick={() => onAddChild(node)}>
-            + {t("projects.addChild")}
-          </button>
-          <button
-            style={{ fontSize: 12, padding: "2px 10px", color: "var(--text-muted)" }}
-            onClick={() => onDelete(node)}
-            aria-label={t("projects.delete")}
-          >
-            ✕
-          </button>
+          {can("entity:write", node.path) && (
+            <button style={{ fontSize: 12, padding: "2px 10px" }} onClick={() => onAddChild(node)}>
+              + {t("projects.addChild")}
+            </button>
+          )}
+          {can("entity:delete", node.path) && (
+            <button
+              style={{ fontSize: 12, padding: "2px 10px", color: "var(--text-muted)" }}
+              onClick={() => onDelete(node)}
+              aria-label={t("projects.delete")}
+            >
+              ✕
+            </button>
+          )}
         </span>
+        )}
       </div>
       {children.map((child) => (
         <TreeNode
@@ -181,6 +189,7 @@ function TreeNode({
 
 export function Assets() {
   const { t } = useTranslation();
+  const can = useCan();
   const { items, error, reload } = useEntities();
   const [formParent, setFormParent] = useState<EntityNode | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -207,14 +216,16 @@ export function Assets() {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <h1>{t("projects.title")}</h1>
-        <button
-          onClick={() => {
-            setFormParent(null);
-            setFormOpen(true);
-          }}
-        >
-          + {t("projects.createRoot")}
-        </button>
+        {can("entity:write", "*") && (
+          <button
+            onClick={() => {
+              setFormParent(null);
+              setFormOpen(true);
+            }}
+          >
+            + {t("projects.createRoot")}
+          </button>
+        )}
       </div>
       {formOpen && (
         <CreateForm

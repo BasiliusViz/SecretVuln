@@ -6,7 +6,9 @@ import { apiFetch } from "../api/client";
 import { apiJson, type ApiResult } from "../api/json";
 import type { EntityNode, EntitySettings, Group, SettingField, SettingValue, SlaPolicy } from "../api/types";
 import { useCan } from "../auth/AuthContext";
+import { Tabs } from "../components/Tabs";
 import { MONO, PRIMARY_BUTTON, formatDateTime } from "../components/ui";
+import { ProjectAccess } from "./ProjectAccess";
 
 const FIELDS: SettingField[] = ["default_branch", "owner_group_id", "repo_url", "repo_type", "repo_path_prefix"];
 const REPO_TYPES = ["gitlab", "github", "gitea", "bitbucket"];
@@ -53,8 +55,11 @@ export function ProjectSettings() {
   const { id = "" } = useParams();
   const { t } = useTranslation();
   const can = useCan();
-  const editable = can("entity:write");
+  const [tab, setTab] = useState<"settings" | "access">("settings");
   const [entity, setEntity] = useState<EntityNode | null>(null);
+  // Права — на этом проекте (страница рисуется только после загрузки entity)
+  const editable = can("entity:write", entity?.path);
+  const canAssignSla = can("sla:assign", entity?.path);
   const [settings, setSettings] = useState<EntitySettings | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -243,6 +248,19 @@ export function ProjectSettings() {
         </p>
       )}
 
+      <Tabs
+        label={t("settings.tabs")}
+        tabs={[
+          { id: "settings", label: t("settings.tabSettings") },
+          { id: "access", label: t("access.tab") },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+      {tab === "access" ? (
+        <ProjectAccess entity={entity} />
+      ) : (
+      <>
       <section className="card" style={SECTION}>
         <div className="section-label">{t("settings.configFile")}</div>
         <p style={{ fontSize: 13, marginTop: 0 }}>
@@ -325,7 +343,7 @@ export function ProjectSettings() {
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <select
               id="sv-sla"
-              disabled={!editable || !canSeeSla}
+              disabled={!editable || !canSeeSla || !canAssignSla}
               value={slaDraft}
               onChange={(e) => setSlaDraft(e.target.value)}
             >
@@ -472,6 +490,8 @@ export function ProjectSettings() {
           </>
         )}
       </section>
+      </>
+      )}
     </div>
   );
 }
