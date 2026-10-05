@@ -98,7 +98,7 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 
 ## Дашборд
 
-Конфигурация виджета хранится как JSON (планируется таблица `dashboard_widgets`): `{chart_type, group_by, period, filters}`. Backend отдаёт агрегаты через generic endpoint (`GROUP BY` по любому полю Finding), Recharts рендерит по chart_type. Ничего не хардкодить под конкретные графики.
+Конфигурация виджета — JSON `{chart_type, group_by, period, filters}`; набор виджетов «Обзора» задан конфигами в коде фронтенда. Backend отдаёт агрегаты через generic `POST /metrics/aggregate` (этап 3), Recharts рендерит по chart_type. Ничего не хардкодить под конкретные графики. Личные дашборды (таблица `dashboard_widgets`, конструктор) — **отложены** до запроса пользователей, спека: `docs/superpowers/specs/2026-10-05-stage6-dashboard-widgets.md`.
 
 
 ## История (2026-07-06)
