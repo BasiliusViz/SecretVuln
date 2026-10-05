@@ -1,7 +1,7 @@
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.models import Entity, Import
 from app.models.import_ import ImportStatus
 from app.schemas.import_ import CreatedEntity, ImportCreated, ImportRead
+from app.services import audit
 from app.services.config_file import MAX_CONFIG_SIZE, ConfigError, ProjectConfig, apply_config, parse_config
 from app.services.entity_paths import ensure_path
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
@@ -56,6 +57,7 @@ async def _create_import(
     *,
     config: ProjectConfig | None,
     created: list[Entity],
+    ip: str | None,
     branch: str | None,
     commit_sha: str | None,
     pipeline_url: str | None,
@@ -107,6 +109,7 @@ async def _create_import(
         config_warnings=warnings,
     )
     db.add(import_record)
+    audit.record_entities_created(db, principal.user, created, ip=ip)
     try:
         await db.commit()
     except IntegrityError:
@@ -131,6 +134,7 @@ async def _create_import(
 async def create_import(
     entity_id: uuid.UUID,
     file: UploadFile,
+    request: Request,
     config: UploadFile | None = File(None),
     branch: str | None = Form(None),
     commit_sha: str | None = Form(None),
@@ -144,7 +148,7 @@ async def create_import(
     parsed = await _read_config(config)
     entity = await get_entity_checked(db, principal, entity_id, "import:import")
     return await _create_import(
-        db, principal, entity, file, config=parsed, created=[],
+        db, principal, entity, file, config=parsed, created=[], ip=audit.client_ip(request),
         branch=branch, commit_sha=commit_sha, pipeline_url=pipeline_url,
         scan_scope=scan_scope, close_missing=close_missing, confirm_empty=confirm_empty,
     )
@@ -153,6 +157,7 @@ async def create_import(
 @router.post("/imports", response_model=ImportCreated, status_code=status.HTTP_201_CREATED)
 async def create_import_by_path(
     file: UploadFile,
+    request: Request,
     entity_id: uuid.UUID | None = Form(None),
     project_path: str | None = Form(None),
     auto_create: bool = Form(False),
@@ -210,7 +215,7 @@ async def create_import_by_path(
             ensure(principal, "import:import", entity, what="Проект")
 
     return await _create_import(
-        db, principal, entity, file, config=parsed, created=created,
+        db, principal, entity, file, config=parsed, created=created, ip=audit.client_ip(request),
         branch=branch, commit_sha=commit_sha, pipeline_url=pipeline_url,
         scan_scope=scan_scope, close_missing=close_missing, confirm_empty=confirm_empty,
     )

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +9,7 @@ from app.api.deps import Principal, ensure, get_current_principal, require_permi
 from app.db.session import get_db
 from app.models import Entity
 from app.schemas.entity import EntityCreate, EntityRead, EntityStub, EntityUpdate, EntityUpsert
+from app.services import audit
 from app.services.access import Access
 from app.services.entity_paths import (
     build_path,
@@ -141,6 +142,7 @@ async def list_entities(
 @router.post("", response_model=EntityRead, status_code=status.HTTP_201_CREATED)
 async def create_entity(
     data: EntityCreate,
+    request: Request,
     principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
@@ -154,6 +156,8 @@ async def create_entity(
     entity.path_cache = await build_path(db, data.parent_id, entity.slug)
     db.add(entity)
     try:
+        await db.flush()
+        audit.record_entities_created(db, principal.user, [entity], ip=audit.client_ip(request))
         await db.commit()
     except IntegrityError:
         await db.rollback()
@@ -181,20 +185,27 @@ async def get_entity_by_path(
 async def upsert_entity_by_path(
     path: str,
     data: EntityUpsert,
+    request: Request,
     principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
     """Идемпотентно: создаёт недостающие узлы пути и обновляет имя/описание последнего."""
     await ensure_path_write(db, principal, path)
     try:
-        entity, _created = await ensure_path(db, path, create=True)
+        entity, created = await ensure_path(db, path, create=True)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, CONFLICT)
+    ip = audit.client_ip(request)
+    before = audit.snapshot(entity, audit.FIELDS["entity"])
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(entity, key, value)
+    if created:
+        audit.record_entities_created(db, principal.user, created, ip=ip)
+    else:
+        _record_update(db, principal, entity, before, audit.ENTITY_UPDATE, ip)
     try:
         await db.commit()
     except IntegrityError:
@@ -217,6 +228,7 @@ async def get_entity(
 async def update_entity(
     entity_id: uuid.UUID,
     data: EntityUpdate,
+    request: Request,
     principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> Entity:
@@ -231,11 +243,14 @@ async def update_entity(
             await _check_parent(db, fields["parent_id"], child_id=entity_id)
         await _ensure_sla_on_move(db, principal, entity, fields["parent_id"])
     renamed = "slug" in fields and fields["slug"] != entity.slug
+    before = audit.snapshot(entity, audit.FIELDS["entity"])
     for key, value in fields.items():
         setattr(entity, key, value)
     try:
         if moved or renamed:
             await refresh_path(db, entity)
+        action = audit.ENTITY_MOVE if moved else audit.ENTITY_UPDATE
+        _record_update(db, principal, entity, before, action, audit.client_ip(request))
         if moved:
             # унаследованная политика SLA могла смениться у всего поддерева
             await db.flush()
@@ -251,10 +266,44 @@ async def update_entity(
 @router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_entity(
     entity_id: uuid.UUID,
+    request: Request,
     principal: Principal = Depends(require_permission("entity", "delete")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Deletes the node and its whole subtree with imports and findings (FK CASCADE)."""
     entity = await get_entity_checked(db, principal, entity_id, "entity:delete")
+    # пишем на родителя: событие увидит руководитель поддерева (у корня — глобальное)
+    parent = await db.get(Entity, entity.parent_id) if entity.parent_id else None
+    audit.record_audit(
+        db,
+        principal.user,
+        audit.ENTITY_DELETE,
+        target=audit.entity_target(entity),
+        entity=parent,
+        changes=audit.snapshot(entity, audit.FIELDS["entity"]),
+        ip=audit.client_ip(request),
+    )
     await db.delete(entity)
     await db.commit()
+
+
+def _record_update(
+    db: AsyncSession,
+    principal: Principal,
+    entity: Entity,
+    before: dict,
+    action: str,
+    ip: str | None,
+) -> None:
+    after = audit.snapshot(entity, audit.FIELDS["entity"])
+    changes = audit.diff(before, after, audit.FIELDS["entity"])
+    if changes:
+        audit.record_audit(
+            db,
+            principal.user,
+            action,
+            target=audit.entity_target(entity),
+            entity=entity,
+            changes=changes,
+            ip=ip,
+        )

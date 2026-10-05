@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +24,7 @@ from app.schemas.entity_settings import (
     RuleRead,
     UnpinRequest,
 )
+from app.services import audit
 from app.services.config_file import apply_stored_config, export_config, repo_conflict_target
 from app.services.entity_paths import subtree_ids
 from app.services.entity_settings import (
@@ -122,6 +123,7 @@ async def get_settings_(
 async def update_settings(
     entity_id: uuid.UUID,
     data: EntitySettingsUpdate,
+    request: Request,
     principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> EntitySettingsRead:
@@ -133,6 +135,7 @@ async def update_settings(
     if not fields or fields.keys() - {"sla_policy_id"}:
         ensure(principal, "entity:write", entity, what="Проект")
 
+    before = audit.snapshot(entity, audit.FIELDS["entity_settings"])
     # Политика и теги не входят в .secretvuln.yml — не закрепляются
     sla_changed = "sla_policy_id" in fields and fields["sla_policy_id"] != entity.sla_policy_id
     if "sla_policy_id" in fields:
@@ -169,6 +172,7 @@ async def update_settings(
     for key, value in fields.items():
         setattr(entity, key, value)
     _pin(entity, *(FIELD_PIN[key] for key in fields))
+    _record_settings(db, principal, entity, before, audit.ENTITY_SETTINGS_UPDATE, request)
     try:
         if sla_changed:
             await db.flush()
@@ -183,6 +187,7 @@ async def update_settings(
 @router.put("/{entity_id}/ownership-rules", response_model=EntitySettingsRead)
 async def replace_rules(
     entity_id: uuid.UUID,
+    request: Request,
     rules: list[RuleIn] = Body(..., max_length=200),
     principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
@@ -193,12 +198,29 @@ async def replace_rules(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, f"Команда для правила «{rule.pattern}» не найдена"
             )
+    old = await db.scalars(
+        select(OwnershipRule)
+        .where(OwnershipRule.entity_id == entity.id)
+        .order_by(OwnershipRule.position)
+    )
+    before = [{"pattern": r.pattern, "group_id": str(r.group_id)} for r in old]
     await db.execute(delete(OwnershipRule).where(OwnershipRule.entity_id == entity.id))
     for position, rule in enumerate(rules):
         db.add(OwnershipRule(
             entity_id=entity.id, pattern=rule.pattern.strip(), group_id=rule.group_id,
             position=position, source=RuleSource.manual,
         ))
+    after = [{"pattern": r.pattern.strip(), "group_id": str(r.group_id)} for r in rules]
+    if before != after:
+        audit.record_audit(
+            db,
+            principal.user,
+            audit.OWNERSHIP_RULES_UPDATE,
+            target=audit.entity_target(entity),
+            entity=entity,
+            changes={"rules": [before, after]},
+            ip=audit.client_ip(request),
+        )
     _pin(entity, "ownership_rules")
     await db.commit()
     return await settings_read(db, entity)
@@ -208,14 +230,19 @@ async def replace_rules(
 async def unpin_setting(
     entity_id: uuid.UUID,
     data: UnpinRequest,
+    request: Request,
     principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> EntitySettingsRead:
     """«Вернуть к файлу»: снять закрепление и сразу подставить значение из файла."""
     entity = await _entity_or_404(db, entity_id, principal, "entity:write")
+    before = audit.snapshot(entity, audit.FIELDS["entity_settings"])
     entity.pinned_fields = [f for f in entity.pinned_fields if f != data.field]
     warnings = await apply_stored_config(
         db, entity, only={data.field}, access=principal.access
+    )
+    _record_settings(
+        db, principal, entity, before, audit.ENTITY_UNPIN, request, extra={"field": data.field}
     )
     await db.commit()
     return await settings_read(db, entity, warnings)
@@ -238,6 +265,7 @@ async def download_config(
 @router.post("/{entity_id}/reassign")
 async def reassign_subtree(
     entity_id: uuid.UUID,
+    request: Request,
     principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
@@ -246,8 +274,42 @@ async def reassign_subtree(
     total = 0
     for node_id in list(await db.scalars(subtree_ids(entity))):
         total += await reassign_entity(db, node_id, actor_id=principal.user.id)
+    audit.record_audit(
+        db,
+        principal.user,
+        audit.FINDINGS_REASSIGN,
+        target=audit.entity_target(entity),
+        entity=entity,
+        changes={"reassigned": total},
+        ip=audit.client_ip(request),
+    )
     await db.commit()
     return {"reassigned": total}
+
+
+def _record_settings(
+    db: AsyncSession,
+    principal: Principal,
+    entity: Entity,
+    before: dict,
+    action: str,
+    request: Request,
+    *,
+    extra: dict | None = None,
+) -> None:
+    """Запись об изменении настроек проекта; без изменений (и без `extra`) — не пишем."""
+    fields = audit.FIELDS["entity_settings"]
+    changes = audit.diff(before, audit.snapshot(entity, fields), fields)
+    if changes or extra:
+        audit.record_audit(
+            db,
+            principal.user,
+            action,
+            target=audit.entity_target(entity),
+            entity=entity,
+            changes={**(extra or {}), **changes},
+            ip=audit.client_ip(request),
+        )
 
 
 @tags_router.get("/tags", response_model=list[str])

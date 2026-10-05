@@ -166,3 +166,23 @@ def record_audit(
     )
     db.add(row)
     return row
+
+
+def entity_target(entity: Entity) -> tuple[str, uuid.UUID, str]:
+    return ("entity", entity.id, entity.path_cache)
+
+
+def record_entities_created(
+    db: AsyncSession, actor: User | None, nodes: Iterable[Entity], *, ip: str | None = None
+) -> None:
+    """`entity.create` для каждого созданного узла (узлы уже получили id — после flush)."""
+    for node in nodes:
+        record_audit(
+            db,
+            actor,
+            ENTITY_CREATE,
+            target=entity_target(node),
+            entity=node,
+            changes=snapshot(node, FIELDS["entity"]),
+            ip=ip,
+        )

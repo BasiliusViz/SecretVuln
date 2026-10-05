@@ -92,3 +92,118 @@ async def test_item_shape(client, db, two_teams, admin):
     assert item["changes"] == {"name": ["a", "A"]}
     assert item["ip"] == "1.2.3.4"
     assert "created_at" in item
+
+
+# --- запись: проекты ---
+
+
+async def _log(db, action=None):
+    from sqlalchemy import select
+
+    from app.models import AuditLog
+
+    q = select(AuditLog).order_by(AuditLog.created_at)
+    if action:
+        q = q.where(AuditLog.action == action)
+    return (await db.scalars(q)).all()
+
+
+async def test_entity_create_update_move_delete(client, db, admin):
+    user, h = admin
+    a = (await client.post("/api/v1/entities", json={"name": "A"}, headers=h)).json()
+    b = (await client.post("/api/v1/entities", json={"name": "B"}, headers=h)).json()
+    svc = (
+        await client.post("/api/v1/entities", json={"name": "Svc", "parent_id": a["id"]}, headers=h)
+    ).json()
+    (created,) = [r for r in await _log(db, audit.ENTITY_CREATE) if r.target_label == "a/svc"]
+    assert created.actor_id == user.id
+    assert str(created.entity_id) == svc["id"]
+    assert created.changes["parent_id"] == a["id"]
+    assert created.ip
+
+    await client.patch(f"/api/v1/entities/{svc['id']}", json={"description": "d"}, headers=h)
+    (upd,) = await _log(db, audit.ENTITY_UPDATE)
+    assert upd.changes == {"description": [None, "d"]}
+
+    r = await client.patch(f"/api/v1/entities/{svc['id']}", json={"parent_id": b["id"]}, headers=h)
+    assert r.status_code == 200
+    (mv,) = await _log(db, audit.ENTITY_MOVE)
+    assert mv.changes["path_cache"] == ["a/svc", "b/svc"]
+    assert mv.changes["parent_id"] == [a["id"], b["id"]]
+
+    # пустая правка — без записи
+    await client.patch(f"/api/v1/entities/{svc['id']}", json={"description": "d"}, headers=h)
+    assert len(await _log(db, audit.ENTITY_UPDATE)) == 1
+
+    assert (await client.delete(f"/api/v1/entities/{svc['id']}", headers=h)).status_code == 204
+    (dl,) = await _log(db, audit.ENTITY_DELETE)
+    assert str(dl.entity_id) == b["id"]  # удаление пишется на родителя
+    assert dl.target_label == "b/svc" and dl.entity_path == "b"
+    assert (await client.delete(f"/api/v1/entities/{b['id']}", headers=h)).status_code == 204
+    root_del = (await _log(db, audit.ENTITY_DELETE))[-1]
+    assert root_del.entity_id is None and root_del.target_label == "b"
+
+
+async def test_entity_delete_visible_to_parent_auditor(client, db, two_teams, admin):
+    t = two_teams
+    await client.delete(f"/api/v1/entities/{t.a_svc.id}", headers=admin[1])
+    body = (await client.get("/api/v1/audit", headers=t.lead_a[1])).json()
+    assert [i["action"] for i in body["items"]] == [audit.ENTITY_DELETE]
+
+
+async def test_upsert_by_path_logs_created_and_updated(client, db, admin):
+    _, h = admin
+    r = await client.put("/api/v1/entities/by-path/x/y", json={"name": "Y"}, headers=h)
+    assert r.status_code == 200
+    assert [r.target_label for r in await _log(db, audit.ENTITY_CREATE)] == ["x", "x/y"]
+    await client.put("/api/v1/entities/by-path/x/y", json={"description": "z"}, headers=h)
+    (upd,) = await _log(db, audit.ENTITY_UPDATE)
+    assert upd.changes == {"description": [None, "z"]}
+
+
+async def test_settings_rules_unpin_reassign(client, db, admin):
+    from tests.factories import make_entity
+
+    from app.models import UserGroup
+
+    _, h = admin
+    e = await make_entity(db, "p")
+    g = UserGroup(name="Team")
+    db.add(g)
+    await db.commit()
+    base = f"/api/v1/entities/{e.id}"
+
+    r = await client.patch(f"{base}/settings", json={"default_branch": "dev"}, headers=h)
+    assert r.status_code == 200
+    (s,) = await _log(db, audit.ENTITY_SETTINGS_UPDATE)
+    assert s.changes["default_branch"] == [None, "dev"]
+    assert s.entity_id == e.id
+
+    rules = [{"pattern": "src/**", "group_id": str(g.id)}]
+    assert (await client.put(f"{base}/ownership-rules", json=rules, headers=h)).status_code == 200
+    (o,) = await _log(db, audit.OWNERSHIP_RULES_UPDATE)
+    assert o.changes == {"rules": [[], [{"pattern": "src/**", "group_id": str(g.id)}]]}
+
+    r = await client.post(f"{base}/settings/unpin", json={"field": "default_branch"}, headers=h)
+    assert r.status_code == 200
+    (u,) = await _log(db, audit.ENTITY_UNPIN)
+    assert u.changes["field"] == "default_branch"
+
+    assert (await client.post(f"{base}/reassign", headers=h)).status_code == 200
+    (ra,) = await _log(db, audit.FINDINGS_REASSIGN)
+    assert ra.changes == {"reassigned": 0}
+
+
+async def test_import_auto_create_logs_entities(client, db, admin):
+    from tests.factories import make_sarif
+
+    _, h = admin
+    files = {"file": ("r.sarif", make_sarif("Semgrep", []), "application/json")}
+    r = await client.post(
+        "/api/v1/imports",
+        data={"project_path": "n/m", "auto_create": "true"},
+        files=files,
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+    assert [r.target_label for r in await _log(db, audit.ENTITY_CREATE)] == ["n", "n/m"]
