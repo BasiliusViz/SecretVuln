@@ -54,6 +54,27 @@ async def create_admin(email: str, password: str, full_name: str | None) -> None
         print("  Это первый пользователь в системе — теперь можно войти через веб-интерфейс.")
 
 
+async def create_user(email: str, password: str, full_name: str | None) -> bool:
+    """Локальный пользователь без прав (права — через группы). Существующего не трогает."""
+    async with async_session_factory() as db:
+        if await db.scalar(select(User).where(User.email == email)) is not None:
+            await engine.dispose()
+            return False
+        db.add(
+            User(
+                email=email,
+                full_name=full_name,
+                hashed_password=hash_password(password),
+                auth_source=AuthSource.local,
+                is_superuser=False,
+                is_active=True,
+            )
+        )
+        await db.commit()
+    await engine.dispose()
+    return True
+
+
 # Встроенные роли: имя → список (ресурс, действие).
 _R = ["entity", "finding", "import", "group", "role", "sla"]
 BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
@@ -141,16 +162,34 @@ def _cmd_seed_roles(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_create_admin(args: argparse.Namespace) -> int:
-    email = (args.email or input("Email суперадмина: ")).strip().lower()
+def _read_credentials(args: argparse.Namespace) -> tuple[str, str] | None:
+    email = (args.email or input("Email: ")).strip().lower()
     password = args.password or getpass.getpass("Пароль: ")
     if not email or not password:
         print("Нужны и email, и пароль.", file=sys.stderr)
-        return 1
+        return None
     if len(password) < MIN_PASSWORD_LEN:
         print(f"Пароль должен быть не короче {MIN_PASSWORD_LEN} символов.", file=sys.stderr)
+        return None
+    return email, password
+
+
+def _cmd_create_admin(args: argparse.Namespace) -> int:
+    creds = _read_credentials(args)
+    if creds is None:
         return 1
-    asyncio.run(create_admin(email, password, args.name))
+    asyncio.run(create_admin(*creds, args.name))
+    return 0
+
+
+def _cmd_create_user(args: argparse.Namespace) -> int:
+    creds = _read_credentials(args)
+    if creds is None:
+        return 1
+    if not asyncio.run(create_user(*creds, args.name)):
+        print(f"Пользователь {creds[0]} уже есть — не меняю.", file=sys.stderr)
+        return 1
+    print(f"✓ Пользователь создан: {creds[0]}")
     return 0
 
 
@@ -163,6 +202,14 @@ def main() -> int:
     p.add_argument("--password", default=os.getenv("SV_ADMIN_PASSWORD"))
     p.add_argument("--name", default=os.getenv("SV_ADMIN_NAME", "Администратор"))
     p.set_defaults(func=_cmd_create_admin)
+
+    pu = sub.add_parser(
+        "create-user", help="Создать/обновить локального пользователя без прав (права — через группы)"
+    )
+    pu.add_argument("--email")
+    pu.add_argument("--password")
+    pu.add_argument("--name")
+    pu.set_defaults(func=_cmd_create_user)
 
     ps = sub.add_parser("seed-roles", help="Создать встроенные роли с правами")
     ps.set_defaults(func=_cmd_seed_roles)

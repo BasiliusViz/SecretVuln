@@ -40,6 +40,17 @@ cd backend; .\.venv\Scripts\python -m pytest -q
 - Фабрики: `make_entity`, `make_import`, `make_finding`, `make_sarif` (`tests/factories.py`).
 - Сквозная проверка пайплайна: `powershell -File scripts\smoke-test.ps1` (нужны поднятые API, воркер и S3).
 
+### Всё сразу и UI-тесты
+
+- **Весь проект:** `powershell -File scripts\check-all.ps1` (или `/sv-check`) — pytest → `npm run build` → UI-тесты, итоговая таблица, код выхода ≠ 0 при падении. Логи шагов — `backend\data\check-logs\`.
+- **Только UI-тесты:** `powershell -File scripts\e2e.ps1 [e2e/auth.spec.ts ...]` — аргументы уходят в `playwright test`.
+- Стенд изолирован: БД `secretvuln_e2e` (пересоздаётся), Redis `/1`, API :8001, Vite :5174, SARIF в `backend\data\sarif-e2e`, LDAP выключен. Dev-стенд можно не гасить. Логи API/воркера/Vite — `backend\data\e2e-logs\`.
+- Учётки стенда — `frontend\e2e\.env.example` (переопределить — `e2e\.env`). Админ входит один раз в `global-setup.ts`. Пользователя без прав каждый тест создаёт себе сам — `createUser()` (CLI `create-user`, работает только при БД `secretvuln_e2e`), роли выдаёт `Api.grant`; общих пользователей между тестами нет.
+- Данные тесты создают сами через `e2e/api.ts` с уникальными именами (`uniq`); тексты сверяют через `t()`/`tc()` из `e2e/i18n.ts`, а не захардкоженным русским. Селекторы — роли и подписи; строки дерева проектов — `getByRole("group", { name: <путь> })`.
+- Браузер — установленный Chrome (`channel: "chrome"`): скачивание Chromium Playwright здесь падает по таймауту. Пустая `SV_E2E_CHANNEL` — встроенный Chromium.
+- Упавший тест: трейс и скриншот в `frontend\playwright-report\` → `cd frontend; npx playwright show-report`. Ретраев нет — флак чинить.
+- `e2e/` проверяется `tsc` (`tsconfig.e2e.json`) в составе `npm run build`.
+
 ## Новая модель или миграция
 
 1. Модель в `backend/app/models/`, обязательно добавить импорт в `app/models/__init__.py` — иначе Alembic её не увидит.
@@ -73,6 +84,8 @@ cd backend; .\.venv\Scripts\python -m pytest -q
 | Страница не обновляется, в консоли `does not provide an export named ...` | Vite закешировал версию файла, сохранённую в середине правок. Перезапустить dev-сервер |
 | `error reading bcrypt version` | Не подключать passlib: используется `bcrypt` напрямую в `app/core/security.py` |
 | LDAP возвращает пустые атрибуты | lldap строг к именам: запрашивать только `cn`, `mail`, `memberof` в нижнем регистре |
+| `.ps1` падает на `docker ... 2>&1` с `NativeCommandError` | PS 5.1 + `$ErrorActionPreference = "Stop"` превращает stderr нативной команды в исключение. Не писать `2>&1`, а заворачивать в `cmd /c "... >nul 2>&1"` |
+| `UnicodeEncodeError: 'charmap'` из CLI | Вывод Python в пайп идёт в cp1251. Ставить `PYTHONIOENCODING=utf-8` (скрипты e2e/check-all уже ставят) |
 | S3 не отвечает на 9000 | Порт занят `wslrelay.exe`, использовать 9002 |
 
 ## Документы

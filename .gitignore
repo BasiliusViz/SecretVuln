@@ -29,3 +29,9 @@ graphify-out/
 # OS
 Thumbs.db
 .DS_Store
+
+# Playwright
+frontend/playwright-report/
+frontend/test-results/
+frontend/e2e/.auth/
+*.tsbuildinfo

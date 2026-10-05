@@ -11,6 +11,10 @@ npm run dev      # http://localhost:5173, /api проксируется на :80
 npm run build    # tsc + vite build → dist/
 ```
 
+## Тесты
+
+UI-тесты на Playwright — `e2e/`, запуск `powershell -File ..\scripts\e2e.ps1`. Подробно — [docs/testing.md](../docs/testing.md).
+
 ## Структура
 
 ```

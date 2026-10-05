@@ -100,6 +100,7 @@ export function Imports() {
             style={{ ...inputStyle, minWidth: 180 }}
             value={selectedEntity}
             onChange={(e) => setSelectedEntity(e.target.value)}
+            aria-label={t("imports.entity")}
           >
             <option value="">{t("imports.selectEntity")}</option>
             {entities.map((e) => (
@@ -110,6 +111,7 @@ export function Imports() {
             ref={fileRef}
             type="file"
             accept=".sarif,.json"
+            aria-label={t("imports.filename")}
             style={{ ...inputStyle, flex: "1 1 200px" }}
           />
           <button onClick={handleUpload} disabled={uploading || !selectedEntity}>

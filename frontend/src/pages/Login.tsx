@@ -66,8 +66,11 @@ export function Login() {
           {t("auth.subtitle")}
         </div>
 
-        <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>{t("auth.email")}</label>
+        <label htmlFor="login-email" style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+          {t("auth.email")}
+        </label>
         <input
+          id="login-email"
           style={{ ...inputStyle, marginBottom: 14 }}
           type="text"
           autoComplete="username"
@@ -76,10 +79,11 @@ export function Login() {
           autoFocus
         />
 
-        <label style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
+        <label htmlFor="login-password" style={{ display: "block", marginBottom: 6, fontSize: 13 }}>
           {t("auth.password")}
         </label>
         <input
+          id="login-password"
           style={{ ...inputStyle, marginBottom: 18 }}
           type="password"
           autoComplete="current-password"
@@ -88,7 +92,7 @@ export function Login() {
         />
 
         {error && (
-          <div style={{ color: "var(--sev-critical-text)", fontSize: 13, marginBottom: 14 }}>
+          <div role="alert" style={{ color: "var(--sev-critical-text)", fontSize: 13, marginBottom: 14 }}>
             {error}
           </div>
         )}

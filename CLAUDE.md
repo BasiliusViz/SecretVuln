@@ -28,7 +28,7 @@ Vulnerability management платформа: импорт находок без�
 
 Чтобы не искать: где что лежит. Подробные инструкции по запуску, миграциям и
 известным граблям — в скилле `secretvuln-dev` (вызывать `/secretvuln-dev`),
-команды `/sv-test`, `/sv-stack`, `/sv-smoke`.
+команды `/sv-test`, `/sv-stack`, `/sv-smoke`, `/sv-check` (всё сразу).
 
 **Backend (`backend/app/`)**
 
@@ -58,7 +58,7 @@ Vulnerability management платформа: импорт находок без�
 | `services/audit.py` | `record_audit`, `snapshot`/`diff`, белые списки `FIELDS`, список действий |
 | `services/storage.py` | Хранилище SARIF: диск или S3/MinIO по `SV_STORAGE_BACKEND` |
 | `worker.py` | ARQ: `process_import`, cron `expire_risks` |
-| `cli.py` | `create-admin`, `seed-roles` (там же список встроенных ролей) |
+| `cli.py` | `create-admin`, `create-user`, `seed-roles` (там же список встроенных ролей) |
 | `tests/conftest.py`, `tests/factories.py` | Тестовая БД, фикстуры пользователей и клиента, фабрики данных |
 
 **Frontend (`frontend/src/`)**
@@ -75,13 +75,23 @@ Vulnerability management платформа: импорт находок без�
 | `components/AuditTable.tsx` | Таблица журнала: раскрытие изменений, пагинация (страница `/audit` и вкладка проекта) |
 | `api/client.ts` | `apiFetch`: Bearer-токен, редирект на логин при 401 |
 
+**UI-тесты и проверка всего (`frontend/e2e/`, `scripts/`)**
+
+| Файл | За что отвечает |
+|---|---|
+| `scripts/check-all.ps1` | pytest → build → e2e, итоговая таблица (`/sv-check`) |
+| `scripts/e2e.ps1` | Изолированный стенд (БД `secretvuln_e2e`, API :8001, Vite :5174) + `playwright test` |
+| `frontend/playwright.config.ts` | Chrome, `workers: 1`, без ретраев, трейсы упавших |
+| `e2e/api.ts`, `e2e/i18n.ts`, `e2e/global-setup.ts` | Данные через API, строки из `ru.json`, вход админа |
+| `e2e/*.spec.ts` | Сценарии: вход, проекты, импорт, окно SV-N, решения, доступ, аудит, все страницы |
+
 ## Конвенции
 
 - Все env-переменные с префиксом `SV_` (см. backend/.env.example)
 - API под `/api/v1`, Swagger — `/api/docs`
 - Модели: UUID PK (`UUIDPKMixin`), created_at/updated_at (`TimestampMixin`), enum'ы — Python `str, enum.Enum` + PG native enum
 - Alembic использует sync-драйвер psycopg (URL выводится из async URL в `config.database_url_sync`); новые модели импортировать в `app/models/__init__.py`, иначе autogenerate их не увидит
-- Миграции: `cd backend && alembic upgrade head`; тесты: `/sv-test`; стенд: `/sv-stack`
+- Миграции: `cd backend && alembic upgrade head`; тесты: `/sv-test`; всё сразу (pytest + build + UI): `/sv-check`; стенд: `/sv-stack`
 - MinIO нужен только при SV_STORAGE_BACKEND=s3: образ закреплён на minio/minio:RELEASE.2025-07-23T15-54-02Z-cpuv1, запуск docker compose --profile s3 up -d
 
 
@@ -91,10 +101,12 @@ Vulnerability management платформа: импорт находок без�
 - Метрики `resolved`/`mttr_days` считаются по `finding_events` (переход открытый → закрытый), переоткрытие их не стирает.
 - **Этап 4 «Права на поддерево»** — сделан, прошёл ревью, в `main`: привязки группа+роль+проект (`role_bindings`), заглушки предков в дереве, делегирование `access:manage`, `sla:assign`, вкладка проекта «Доступ». Подробно — `docs/architecture.md`, раздел «Авторизация».
 - **Этап 5а «Журнал аудита»** — сделан, прошёл ревью, в `main`: `audit_log` + `record_audit`, `GET /audit` с правом `audit:read` на поддерево, сторож покрытия мутаций, страница `/audit`, вкладка проекта «Журнал», «Загрузил» в импортах. Подробно — `docs/architecture.md`, раздел «Журнал аудита».
-- Бэклог MVP: Helm chart; хвосты аудита — в `docs/architecture.md`. Конструктор дашборд-виджетов **отложен** (не нужен, пока не попросят) — `docs/superpowers/specs/2026-10-05-stage6-dashboard-widgets.md`.
+- **UI-тесты** — сделаны: Playwright, 11 тестов в 8 файлах на изолированном стенде, `scripts/check-all.ps1` / `/sv-check` проверяет всё одной командой. **Дальше**: обсуждать AI-разбор (`docs/proposals/`).
+- **Отложено, пока не попросят**: Helm/деплой (Dockerfile ещё нет — понадобятся при первом реальном деплое), конструктор дашборд-виджетов — `docs/superpowers/specs/2026-10-05-stage6-dashboard-widgets.md`.
 
 ## Документы
 
+- `docs/testing.md` — тесты: `check-all`, UI-тесты на Playwright, как писать новые
 - `docs/architecture.md` — подробно по подсистемам: модель данных, импорт, владельцы, auth/LDAP, группы, Casbin, история проекта
 - `docs/superpowers/specs/` — спеки этапов; `docs/superpowers/plans/` — планы
 - `docs/proposals/` — исследования (процесс разбора, хранилище для ИИ, дерево и API)

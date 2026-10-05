@@ -117,6 +117,8 @@ function TreeNode({
   return (
     <>
       <div
+        role="group"
+        aria-label={node.path}
         style={{
           display: "flex",
           alignItems: "center",
