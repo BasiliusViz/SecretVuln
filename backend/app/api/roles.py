@@ -46,7 +46,11 @@ async def _read(db: AsyncSession, role: Role) -> RoleRead:
     return _to_read(role, (await get_permissions(db, [role.name]))[role.name])
 
 
-async def _get_or_404(role_id: uuid.UUID, db: AsyncSession) -> Role:
+async def _get_or_404(role_id: uuid.UUID, db: AsyncSession, *, lock: bool = False) -> Role:
+    """lock: изменения прав, имени и удаление одной роли — по очереди, иначе параллельные
+    delete+insert в casbin_rule задвоят строки или оставят права удалённой роли."""
+    if lock:
+        await db.execute(select(Role.id).where(Role.id == role_id).with_for_update())
     role = await db.get(Role, role_id)
     if role is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Роль не найдена")
@@ -146,7 +150,7 @@ async def update_role(
     principal: Principal = Depends(require_permission("role", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> RoleRead:
-    role = await _get_or_404(role_id, db)
+    role = await _get_or_404(role_id, db, lock=True)
     if role.is_builtin and data.name and data.name.strip() != role.name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Встроенную роль нельзя переименовать")
     old_name = role.name
@@ -178,9 +182,7 @@ async def set_permissions(
     principal: Principal = Depends(require_permission("role", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> RoleRead:
-    role = await _get_or_404(role_id, db)
-    # параллельные замены прав одной роли — по очереди, иначе delete+insert задвоят строки
-    await db.execute(select(Role.id).where(Role.id == role.id).with_for_update())
+    role = await _get_or_404(role_id, db, lock=True)
     validated = _validate(data.permissions)
     before = set(_perm_list((await get_permissions(db, [role.name]))[role.name]))
     after = set(_perm_list(validated))
@@ -202,7 +204,7 @@ async def delete_role(
     principal: Principal = Depends(require_permission("role", "delete")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    role = await _get_or_404(role_id, db)
+    role = await _get_or_404(role_id, db, lock=True)
     if role.is_builtin:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Встроенную роль нельзя удалить")
     await record_cascade_delete(
