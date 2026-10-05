@@ -3,10 +3,14 @@
 Метрики:
 - count     — открытые находки сейчас (срез);
 - opened    — появились за период (по first_seen);
-- resolved  — закрыты за период (по resolved_at);
+- resolved  — сколько находок закрыто за период;
 - overdue   — открытые с истёкшим сроком сейчас (срез);
 - sla_ratio — доля открытых со сроком, которые ещё не просрочены (срез; без due_at не участвуют);
-- mttr_days — среднее resolved_at - first_seen в днях для fixed, закрытых за период.
+- mttr_days — среднее «закрытие в fixed − first_seen» в днях по закрытиям за период.
+
+resolved и mttr_days считаются по истории (`finding_events`: переход из открытого
+статуса в закрытый), а не по `resolved_at`: переоткрытие обнуляет `resolved_at`,
+и прошлое закрытие пропало бы из метрик задним числом.
 
 group_by=week всегда ограничен периодом по «временной» колонке метрики.
 """
@@ -19,8 +23,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import Float, cast, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Entity, Finding, UserGroup
-from app.models.finding import OPEN_STATUSES, FindingStatus
+from app.models import Entity, Finding, FindingEvent, UserGroup
+from app.models.finding import CLOSED_STATUSES, OPEN_STATUSES, FindingStatus
 from app.schemas.metrics import MetricQuery, MetricRow
 from app.services.entity_paths import subtree_ids
 from app.services.entity_tree import entities_with_tag
@@ -33,11 +37,13 @@ PERIOD_DAYS = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 TIME_COLUMN = {
     "count": Finding.first_seen,
     "opened": Finding.first_seen,
-    "resolved": Finding.resolved_at,
+    "resolved": FindingEvent.created_at,
     "overdue": Finding.due_at,
     "sla_ratio": Finding.due_at,
-    "mttr_days": Finding.resolved_at,
+    "mttr_days": FindingEvent.created_at,
 }
+# Метрики по событиям закрытия: Finding JOIN FindingEvent
+CLOSURE = {"resolved", "mttr_days"}
 # Метрики-срезы: период к ним не применяется (кроме группировки по неделям)
 SNAPSHOT = {"count", "overdue", "sla_ratio"}
 GROUP_COLUMN = {
@@ -53,21 +59,32 @@ def _value(metric: str, now: datetime):
         on_time = func.count().filter(Finding.due_at >= now)
         return cast(on_time, Float) / func.nullif(func.count(), 0)
     if metric == "mttr_days":
-        return func.avg(func.extract("epoch", Finding.resolved_at - Finding.first_seen)) / 86400
+        return func.avg(func.extract("epoch", FindingEvent.created_at - Finding.first_seen)) / 86400
+    if metric == "resolved":
+        # закрытую, переоткрытую и снова закрытую за период считаем один раз
+        return func.count(func.distinct(Finding.id))
     return func.count()
+
+
+def _closure(to_statuses) -> list:
+    """Событие перехода из открытого статуса в закрытый (смена «ложное → исправлено» — не закрытие)."""
+    return [
+        FindingEvent.to_status.in_(to_statuses),
+        FindingEvent.from_status.is_(None) | FindingEvent.from_status.in_(OPEN_STATUSES),
+    ]
 
 
 def _metric_conditions(metric: str, now: datetime) -> list:
     if metric == "count":
         return [Finding.status.in_(OPEN_STATUSES)]
     if metric == "resolved":
-        return [Finding.resolved_at.is_not(None)]
+        return _closure(CLOSED_STATUSES)
     if metric == "overdue":
         return [Finding.status.in_(OPEN_STATUSES), Finding.due_at < now]
     if metric == "sla_ratio":
         return [Finding.status.in_(OPEN_STATUSES), Finding.due_at.is_not(None)]
     if metric == "mttr_days":
-        return [Finding.status == FindingStatus.fixed, Finding.resolved_at.is_not(None)]
+        return _closure([FindingStatus.fixed])
     return []
 
 
@@ -122,7 +139,10 @@ async def aggregate(
         group = GROUP_COLUMN[query.group_by]
     group = group.label("grp")
 
-    q = select(group, value).where(*conds).group_by(group)
+    q = select(group, value)
+    if query.metric in CLOSURE:
+        q = q.select_from(Finding).join(FindingEvent, FindingEvent.finding_id == Finding.id)
+    q = q.where(*conds).group_by(group)
     if query.group_by == "week":
         q = q.order_by(group.desc())
     else:

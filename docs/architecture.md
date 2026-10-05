@@ -88,7 +88,7 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - Каскады и переносы: удаление группы/роли пишет `binding.delete` на каждую снесённую привязку (`cascade: "group.delete"`/`"role.delete"`) — руководитель проекта видит пропажу доступа. `entity.move` пишется и на старого родителя, если узел ушёл из его ветки; путь новой ветки при этом виден аудитору старой (осознанно: `path_cache [было, стало]` был в записи и раньше).
 - Имена рядом с UUID (`audit.with_names`): `parent_id` → `parent` (путь), `owner_group_id` → `owner_group`, `sla_policy_id` → `sla_policy`, той же формы; в правилах владения — `group`. Имя — на момент события.
 - `repo_url`: учётные данные вырезаются, но их смена видна — `Snapshot` держит в памяти sha256 от userinfo, `diff` добавляет `credentials_changed: ["repo_url"]`.
-- Бэклог: в `roles.set_permissions` Casbin применяется до коммита записи — при падении коммита права изменятся без записи; `entity.delete` не пишет `binding.delete` для привязок на удалённом поддереве; `record_entities_created` делает `with_names` на каждый узел (N+1 на длинной цепочке предков).
+- Права ролей (`casbin_rule`) API пишет SQL-ом в транзакции запроса (`authz/policies.py`) — вместе с записью журнала; in-memory enforcer остался для CLI и тестов. `entity.delete` пишет `binding.delete` (с `cascade`) на каждую привязку снесённого поддерева — на родителя, как и само удаление.
 
 ## Локализация и дизайн (см. frontend/DESIGN.md)
 
