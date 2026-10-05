@@ -211,6 +211,34 @@ async def test_import_auto_create_logs_entities(client, db, admin):
     assert [r.target_label for r in await _log(db, audit.ENTITY_CREATE)] == ["n", "n/m"]
 
 
+async def test_import_with_config_logs_settings_change(client, db, admin):
+    from tests.factories import make_entity, make_sarif
+
+    _, h = admin
+    await make_entity(db, "cfg")
+    config = b"version: 1\ndefault_branch: main\n"
+
+    def files():
+        return {
+            "file": ("s.sarif", make_sarif("Semgrep", []), "application/json"),
+            "config": (".secretvuln.yml", config, "application/x-yaml"),
+        }
+
+    # Ветка отклонена — импорт и настройки откатываются вместе с записью журнала
+    r = await client.post(
+        "/api/v1/imports", data={"project_path": "cfg", "branch": "feature"}, files=files(), headers=h
+    )
+    assert r.status_code == 422, r.text
+    assert await _log(db, audit.ENTITY_SETTINGS_UPDATE) == []
+
+    r = await client.post(
+        "/api/v1/imports", data={"project_path": "cfg", "branch": "main"}, files=files(), headers=h
+    )
+    assert r.status_code == 201, r.text
+    [row] = await _log(db, audit.ENTITY_SETTINGS_UPDATE)
+    assert row.changes == {"source": "config", "default_branch": [None, "main"]}
+
+
 # --- запись: доступ, группы, роли, SLA ---
 
 

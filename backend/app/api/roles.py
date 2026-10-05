@@ -175,13 +175,14 @@ async def set_permissions(
     validated = _validate(data.permissions)
     before = set(_perm_list(role_permissions(role.name)))
     after = set(_perm_list(validated))
+    # Сначала Casbin: если он упадёт, в журнале не останется несостоявшегося изменения
+    set_role_permissions(role.name, validated)
     if before != after:
         _record(db, principal, request, audit.ROLE_PERMISSIONS_UPDATE, role, {
             "added": sorted(after - before),
             "removed": sorted(before - after),
         })
         await db.commit()
-    set_role_permissions(role.name, validated)
     return _to_read(role)
 
 

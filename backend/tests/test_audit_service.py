@@ -86,3 +86,12 @@ def test_snapshot_never_contains_secrets():
     assert snapshot(user, ("email", "hashed_password", "password", "token")) == {"email": "u@x"}
     for fields in FIELDS.values():
         assert not {"hashed_password", "password", "token"} & set(fields)
+
+
+def test_snapshot_strips_credentials_from_urls():
+    from types import SimpleNamespace
+
+    from app.services.audit import snapshot
+
+    obj = SimpleNamespace(repo_url="https://user:tok@git.corp:8443/a/b", name="x@y")
+    assert snapshot(obj, ("repo_url", "name")) == {"repo_url": "https://git.corp:8443/a/b", "name": "x@y"}

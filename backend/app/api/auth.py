@@ -99,7 +99,9 @@ async def login(
         except LdapError as e:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"LDAP недоступен: {e}")
         if ldap_user is None:
-            raise await _failed(db, email, ip, unauthorized, _BAD_CREDENTIALS, "bad_password")
+            # LDAP не различает «нет пользователя» и «неверный пароль»
+            reason = "bad_password" if user is not None else "ldap_rejected"
+            raise await _failed(db, email, ip, unauthorized, _BAD_CREDENTIALS, reason)
 
         # Провижёнинг / обновление локальной записи.
         if user is None:

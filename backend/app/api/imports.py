@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import Principal, ensure, not_found, require_permission
 from app.api.entities import ensure_path_write, get_entity_checked
 from app.db.session import get_db
-from app.models import Entity, Import
+from app.models import Entity, Import, OwnershipRule
 from app.models.import_ import ImportStatus
 from app.schemas.import_ import CreatedEntity, ImportCreated, ImportRead
 from app.services import audit
@@ -51,6 +51,15 @@ async def _read_config(config: UploadFile | None) -> ProjectConfig | None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
 
 
+async def _rules_snapshot(db: AsyncSession, entity: Entity) -> list[dict]:
+    rules = await db.scalars(
+        select(OwnershipRule)
+        .where(OwnershipRule.entity_id == entity.id)
+        .order_by(OwnershipRule.position)
+    )
+    return [{"pattern": r.pattern, "group_id": str(r.group_id)} for r in rules]
+
+
 async def _create_import(
     db: AsyncSession,
     principal: Principal,
@@ -78,9 +87,27 @@ async def _create_import(
                 status.HTTP_403_FORBIDDEN,
                 "Файл настроек проекта применяется только с правом entity:write на проект",
             )
+        fields = audit.FIELDS["entity_settings"]
+        settings_before = audit.snapshot(entity, fields)
+        rules_before = await _rules_snapshot(db, entity)
         warnings = await apply_config(
             db, entity, config, commit_sha=commit_sha or None, access=principal.access
         )
+        # Файл настроек меняет проект так же, как ручная правка — пишем в журнал с пометкой источника
+        changes = audit.diff(settings_before, audit.snapshot(entity, fields), fields)
+        if changes:
+            audit.record_audit(
+                db, principal.user, audit.ENTITY_SETTINGS_UPDATE,
+                target=audit.entity_target(entity), entity=entity,
+                changes={"source": "config", **changes}, ip=ip,
+            )
+        rules_after = await _rules_snapshot(db, entity)
+        if rules_before != rules_after:
+            audit.record_audit(
+                db, principal.user, audit.OWNERSHIP_RULES_UPDATE,
+                target=audit.entity_target(entity), entity=entity,
+                changes={"source": "config", "rules": [rules_before, rules_after]}, ip=ip,
+            )
 
     branch = branch or None
     # Ветка формы не задана — проверяем по ветке из SARIF-provenance, чтобы не закоммитить

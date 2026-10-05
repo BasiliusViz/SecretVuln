@@ -12,6 +12,7 @@ import enum
 import uuid
 from datetime import date, datetime
 from typing import Any, Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -108,9 +109,25 @@ def _allowed(fields: Iterable[str]) -> list[str]:
     return [f for f in fields if f not in _SECRETS]
 
 
+def _strip_userinfo(value: Any) -> Any:
+    """`https://user:token@host/x` → `https://host/x`: учётные данные в URL — тоже секрет."""
+    if not isinstance(value, str) or "@" not in value:
+        return value
+    parts = urlsplit(value)
+    if not parts.username and not parts.password:
+        return value
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit(parts._replace(netloc=host))
+
+
 def snapshot(obj: Any, fields: Iterable[str]) -> dict[str, Any]:
     """Значения разрешённых полей объекта в JSON-виде (для create/delete и как `before`)."""
-    return {f: _json(getattr(obj, f, None)) for f in _allowed(fields)}
+    return {
+        f: _json(_strip_userinfo(getattr(obj, f, None)) if f.endswith("_url") else getattr(obj, f, None))
+        for f in _allowed(fields)
+    }
 
 
 def diff(before: dict[str, Any], after: dict[str, Any], fields: Iterable[str]) -> dict[str, list]:
