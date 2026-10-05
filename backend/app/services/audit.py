@@ -187,18 +187,30 @@ async def with_names(db: AsyncSession, changes: dict[str, Any]) -> dict[str, Any
 
     Форма значения та же: скаляр для снимка, `[было, стало]` для разницы.
     """
+    return (await with_names_many(db, [changes]))[0]
+
+
+async def with_names_many(
+    db: AsyncSession, many: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """`with_names` для пачки: по запросу на вид ссылки, а не на каждый словарь."""
     def ids(value: Any) -> list[Any]:
         return value if isinstance(value, list) else [value]
 
     names: dict[str, str] = {}
     for key, (_, column) in NAMED_REFS.items():
-        if key not in changes:
-            continue
-        wanted = {uuid.UUID(str(v)) for v in ids(changes[key]) if v}
+        wanted = {
+            uuid.UUID(str(v)) for changes in many if key in changes
+            for v in ids(changes[key]) if v
+        }
         if wanted:
             model = column.class_
             rows = await db.execute(select(model.id, column).where(model.id.in_(wanted)))
             names.update({str(i): n for i, n in rows.all()})
+    return [_apply_names(changes, names) for changes in many]
+
+
+def _apply_names(changes: dict[str, Any], names: dict[str, str]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in changes.items():
         out[key] = value
@@ -274,13 +286,15 @@ async def record_entities_created(
     db: AsyncSession, actor: User | None, nodes: Iterable[Entity], *, ip: str | None = None
 ) -> None:
     """`entity.create` для каждого созданного узла (узлы уже получили id — после flush)."""
-    for node in nodes:
+    nodes = list(nodes)
+    all_changes = await with_names_many(db, [snapshot(n, FIELDS["entity"]) for n in nodes])
+    for node, changes in zip(nodes, all_changes):
         record_audit(
             db,
             actor,
             ENTITY_CREATE,
             target=entity_target(node),
             entity=node,
-            changes=await with_names(db, snapshot(node, FIELDS["entity"])),
+            changes=changes,
             ip=ip,
         )
