@@ -13,13 +13,6 @@ class UserBrief(BaseModel):
     auth_source: str
 
 
-class RoleBrief(BaseModel):
-    model_config = {"from_attributes": True}
-
-    id: uuid.UUID
-    name: str
-
-
 class GroupCreate(BaseModel):
     name: str
     description: str | None = None
@@ -44,7 +37,9 @@ class GroupRead(BaseModel):
     ldap_group: str | None
     last_synced_at: datetime | None
     member_count: int = 0
-    roles: list[RoleBrief] = []
+    # GET /groups?entity_id=X: есть ли у группы finding:read на X (для предупреждения
+    # при назначении); без entity_id — None. Привязки — GET /groups/{id}/bindings
+    has_access: bool | None = None
 
 
 class GroupDetail(GroupRead):

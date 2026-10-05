@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { apiFetch } from "../api/client";
+import { apiJson } from "../api/json";
+import type { Binding, EntityNode } from "../api/types";
+import { useCan } from "../auth/AuthContext";
 
 interface RoleBrief {
   id: string;
@@ -23,7 +26,6 @@ interface Group {
   ldap_group: string | null;
   last_synced_at: string | null;
   member_count: number;
-  roles: RoleBrief[];
 }
 
 interface GroupDetail extends Group {
@@ -207,38 +209,145 @@ function MemberManager({ group, onChanged }: { group: GroupDetail; onChanged: ()
   );
 }
 
+/** Привязки группы «роль → область» (проект с поддеревом или всё дерево). */
+function BindingManager({
+  group,
+  bindings,
+  allRoles,
+  entities,
+  canWrite,
+  onChanged,
+}: {
+  group: Group;
+  bindings: Binding[];
+  allRoles: RoleBrief[];
+  entities: EntityNode[];
+  canWrite: boolean;
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+  const [roleId, setRoleId] = useState("");
+  // "" — на всё дерево
+  const [entityId, setEntityId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const add = async () => {
+    if (!roleId) return;
+    setError(null);
+    const res = await apiJson(`/api/v1/groups/${group.id}/bindings`, "POST", {
+      role_id: roleId,
+      entity_id: entityId || null,
+    });
+    if (!res.ok) {
+      setError(res.status === 409 ? t("groups.bindingDuplicate") : res.error ?? t("groups.saveError"));
+      return;
+    }
+    setRoleId("");
+    setEntityId("");
+    onChanged();
+  };
+  const remove = async (b: Binding) => {
+    await apiFetch(`/api/v1/groups/${group.id}/bindings/${b.id}`, { method: "DELETE" });
+    onChanged();
+  };
+
+  return (
+    <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>{t("groups.bindingsTitle")}</div>
+      {bindings.length === 0 ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>{t("groups.noBindings")}</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
+          {bindings.map((b) => (
+            <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <span style={{ fontWeight: 500 }}>{b.role_name}</span>
+              <span style={{ color: "var(--text-muted)" }}>→</span>
+              <span style={b.entity_path ? { fontFamily: "var(--font-mono)", fontSize: 12 } : undefined}>
+                {b.entity_path ?? t("groups.wholeTree")}
+              </span>
+              {canWrite && (
+                <button
+                  onClick={() => void remove(b)}
+                  style={{ fontSize: 12, padding: "0 8px", color: "var(--text-muted)" }}
+                  aria-label={t("groups.remove")}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {canWrite && (
+        <>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <select
+              style={{ ...inputStyle, flex: "1 1 160px" }}
+              value={roleId}
+              onChange={(e) => setRoleId(e.target.value)}
+              aria-label={t("groups.pickRole")}
+            >
+              <option value="">{t("groups.pickRole")}</option>
+              {allRoles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+            <select
+              style={{ ...inputStyle, flex: "2 1 220px" }}
+              value={entityId}
+              onChange={(e) => setEntityId(e.target.value)}
+              aria-label={t("groups.scope")}
+            >
+              <option value="">{t("groups.wholeTree")}</option>
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.path}
+                </option>
+              ))}
+            </select>
+            <button onClick={() => void add()} disabled={!roleId}>
+              {t("groups.addRole")}
+            </button>
+          </div>
+          {error && <div style={{ color: "var(--sev-critical-text)", fontSize: 12, marginTop: 6 }}>{error}</div>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function GroupRow({
   group,
   allRoles,
+  entities,
+  canWrite,
   onChanged,
 }: {
   group: Group;
   allRoles: RoleBrief[];
+  entities: EntityNode[];
+  canWrite: boolean;
   onChanged: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<GroupDetail | null>(null);
+  const [bindings, setBindings] = useState<Binding[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
-  const [roleToAdd, setRoleToAdd] = useState("");
 
-  const addRole = async () => {
-    if (!roleToAdd) return;
-    await apiFetch(`/api/v1/groups/${group.id}/roles/${roleToAdd}`, { method: "POST" });
-    setRoleToAdd("");
-    onChanged();
-  };
-
-  const removeRole = async (roleId: string) => {
-    await apiFetch(`/api/v1/groups/${group.id}/roles/${roleId}`, { method: "DELETE" });
-    onChanged();
-  };
+  const loadBindings = useCallback(async () => {
+    const r = await apiJson<Binding[]>(`/api/v1/groups/${group.id}/bindings`);
+    setBindings(r.data ?? []);
+  }, [group.id]);
 
   const loadDetail = useCallback(async () => {
     const d = await apiFetch(`/api/v1/groups/${group.id}`).then((r) => r.json());
     setDetail(d);
-  }, [group.id]);
+    await loadBindings();
+  }, [group.id, loadBindings]);
 
   const toggle = async () => {
     if (!expanded && !detail) await loadDetail();
@@ -291,33 +400,20 @@ function GroupRow({
         <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
           {t("groups.memberCount", { count: group.member_count })}
         </span>
-        {group.roles.map((r) => (
-          <span
-            key={r.id}
-            style={{
-              fontSize: 11,
-              fontWeight: 500,
-              padding: "2px 8px",
-              borderRadius: 99,
-              background: "var(--sev-low-bg)",
-              color: "var(--sev-low-text)",
-            }}
-          >
-            {r.name}
-          </span>
-        ))}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
           {group.source === "ldap" && (
             <button style={{ fontSize: 12, padding: "2px 10px" }} onClick={sync} disabled={syncing}>
               {syncing ? t("groups.syncing") : t("groups.sync")}
             </button>
           )}
-          <button
-            style={{ fontSize: 12, padding: "2px 10px", color: "var(--text-muted)" }}
-            onClick={del}
-          >
-            ✕
-          </button>
+          {canWrite && (
+            <button
+              style={{ fontSize: 12, padding: "2px 10px", color: "var(--text-muted)" }}
+              onClick={del}
+            >
+              ✕
+            </button>
+          )}
         </span>
       </div>
       {group.source === "ldap" && (
@@ -329,61 +425,14 @@ function GroupRow({
       {expanded && detail && (
         <div style={{ padding: "6px 14px 14px 38px" }}>
           <MemberManager group={detail} onChanged={() => { loadDetail(); onChanged(); }} />
-          <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>{t("groups.rolesTitle")}</div>
-            {group.roles.length === 0 ? (
-              <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>
-                {t("groups.noRoles")}
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                {group.roles.map((r) => (
-                  <span
-                    key={r.id}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontSize: 12,
-                      padding: "2px 6px 2px 10px",
-                      borderRadius: 99,
-                      background: "var(--sev-low-bg)",
-                      color: "var(--sev-low-text)",
-                    }}
-                  >
-                    {r.name}
-                    <button
-                      onClick={() => removeRole(r.id)}
-                      style={{
-                        border: "none", background: "none", cursor: "pointer",
-                        color: "inherit", padding: 0, fontSize: 13, lineHeight: 1,
-                      }}
-                      aria-label={t("groups.remove")}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 8 }}>
-              <select
-                style={{ ...inputStyle, flex: "1 1 auto" }}
-                value={roleToAdd}
-                onChange={(e) => setRoleToAdd(e.target.value)}
-              >
-                <option value="">{t("groups.pickRole")}</option>
-                {allRoles
-                  .filter((r) => !group.roles.some((gr) => gr.id === r.id))
-                  .map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-              </select>
-              <button onClick={addRole} disabled={!roleToAdd}>
-                {t("groups.addRole")}
-              </button>
-            </div>
-          </div>
+          <BindingManager
+            group={group}
+            bindings={bindings}
+            allRoles={allRoles}
+            entities={entities}
+            canWrite={canWrite}
+            onChanged={() => void loadBindings()}
+          />
         </div>
       )}
     </div>
@@ -394,7 +443,11 @@ export function Groups() {
   const { t } = useTranslation();
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [allRoles, setAllRoles] = useState<RoleBrief[]>([]);
+  const [entities, setEntities] = useState<EntityNode[]>([]);
   const [formOpen, setFormOpen] = useState(false);
+  const can = useCan();
+  // состав групп и привязки правит только глобальный group:write
+  const canWrite = can("group:write", "*");
 
   const reload = useCallback(() => {
     apiFetch("/api/v1/groups")
@@ -405,6 +458,10 @@ export function Groups() {
       .then((r) => (r.ok ? r.json() : []))
       .then((rows: RoleBrief[]) => setAllRoles(rows))
       .catch(() => setAllRoles([]));
+    // выдавать можно только на видимые проекты, заглушки предков в область не попадают
+    void apiJson<EntityNode[]>("/api/v1/entities").then((r) =>
+      setEntities((r.data ?? []).filter((e) => !e.stub).sort((a, b) => a.path.localeCompare(b.path))),
+    );
   }, []);
 
   useEffect(reload, [reload]);
@@ -413,7 +470,7 @@ export function Groups() {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <h1>{t("groups.title")}</h1>
-        <button onClick={() => setFormOpen(true)}>+ {t("groups.createTitle")}</button>
+        {canWrite && <button onClick={() => setFormOpen(true)}>+ {t("groups.createTitle")}</button>}
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: -8, maxWidth: 640 }}>
         {t("groups.intro")}
@@ -437,7 +494,14 @@ export function Groups() {
         ) : (
           <div style={{ marginTop: -1 }}>
             {groups.map((g) => (
-              <GroupRow key={g.id} group={g} allRoles={allRoles} onChanged={reload} />
+              <GroupRow
+                key={g.id}
+                group={g}
+                allRoles={allRoles}
+                entities={entities}
+                canWrite={canWrite}
+                onChanged={reload}
+              />
             ))}
           </div>
         )}

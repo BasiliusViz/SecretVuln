@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { apiJson } from "../api/json";
 import type { BulkResult, EntityNode, Finding, Group } from "../api/types";
+import { useCan } from "../auth/AuthContext";
 import {
   DecisionDialog,
   type DecisionBody,
@@ -79,6 +80,22 @@ export function Inbox() {
     return current ? [current.id] : [];
   }, [selected, items, cursor]);
 
+  // Бэкенд применяет массовое действие по принципу «всё или ничего» — проверяем каждую цель
+  const can = useCan();
+  const canOnTargets = useCallback(
+    (perm: string) =>
+      targets.length > 0 &&
+      targets.every((id) => {
+        const f = items?.find((x) => x.id === id);
+        // без пути проекта (ещё не загружен) — не разрешаем
+        const path = f ? paths[f.entity_id] : undefined;
+        return !!path && can(perm, path);
+      }),
+    [targets, items, paths, can],
+  );
+  const canTriageTargets = canOnTargets("finding:triage");
+  const canApproveTargets = canOnTargets("finding:approve");
+
   const bulk = useCallback(
     async (body: Record<string, unknown>): Promise<string | null> => {
       if (targets.length === 0) return null;
@@ -131,8 +148,8 @@ export function Inbox() {
         setCursor((c) => Math.min(c + 1, Math.max(list.length - 1, 0)));
       else if (key === "k") setCursor((c) => Math.max(c - 1, 0));
       else if (key === "x" && list[cursor]) toggle(list[cursor].id);
-      else if (key === "c") void confirm();
-      else if (key === "f" && targets.length > 0) setFpOpen(true);
+      else if (key === "c" && canTriageTargets) void confirm();
+      else if (key === "f" && canApproveTargets) setFpOpen(true);
       else if (key === "a") teamRef.current?.focus();
       else if (e.key === "Enter" && list[cursor])
         navigate(`/f/SV-${list[cursor].number}`);
@@ -141,7 +158,7 @@ export function Inbox() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, items, cursor, fpOpen, confirm, toggle, navigate, targets]);
+  }, [tab, items, cursor, fpOpen, confirm, toggle, navigate, canTriageTargets, canApproveTargets]);
 
   const assign = async () => {
     if (!team) return;
@@ -184,13 +201,13 @@ export function Inbox() {
             </span>
             <button
               onClick={() => void confirm()}
-              disabled={targets.length === 0}
+              disabled={!canTriageTargets}
             >
               {t("inbox.confirm")}
             </button>
             <button
-              onClick={() => targets.length > 0 && setFpOpen(true)}
-              disabled={targets.length === 0}
+              onClick={() => canApproveTargets && setFpOpen(true)}
+              disabled={!canApproveTargets}
             >
               {t("inbox.falsePositive")}
             </button>
@@ -207,7 +224,7 @@ export function Inbox() {
                 </option>
               ))}
             </select>
-            <button onClick={assign} disabled={!team || targets.length === 0}>
+            <button onClick={assign} disabled={!team || !canTriageTargets}>
               {t("inbox.assign")}
             </button>
             {message && (

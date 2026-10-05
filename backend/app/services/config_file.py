@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Entity, OwnershipRule, RuleSource, UserGroup
 from app.models.entity import RepoType
+from app.services.access import Access
 from app.services.entity_settings import find_repo_owner, is_http_url, normalize_repo_url
 
 MAX_CONFIG_SIZE = 64 * 1024
@@ -75,18 +76,34 @@ async def _group_by_name(db: AsyncSession, name: str) -> UserGroup | None:
     return await db.scalar(select(UserGroup).where(UserGroup.name == name))
 
 
+def repo_conflict_target(other: Entity, access: Access | None) -> str:
+    """Чужой путь показываем, только если проект виден вызывающему (хотя бы заглушкой)."""
+    if access is None or access.can_see(other):
+        return f"к проекту {other.path_cache}"
+    return "к другому проекту"
+
+
 async def apply_config(
-    db: AsyncSession, entity: Entity, config: ProjectConfig, *, commit_sha: str | None = None
+    db: AsyncSession,
+    entity: Entity,
+    config: ProjectConfig,
+    *,
+    commit_sha: str | None = None,
+    access: Access | None = None,
 ) -> list[str]:
     """Сохраняет файл в узле и переносит значения в незакреплённые поля. Не коммитит."""
     entity.config_file = config.model_dump(mode="json", exclude_none=True)
     entity.config_commit_sha = commit_sha
     entity.config_applied_at = datetime.now(timezone.utc)
-    return await apply_stored_config(db, entity)
+    return await apply_stored_config(db, entity, access=access)
 
 
 async def apply_stored_config(
-    db: AsyncSession, entity: Entity, *, only: set[str] | None = None
+    db: AsyncSession,
+    entity: Entity,
+    *,
+    only: set[str] | None = None,
+    access: Access | None = None,
 ) -> list[str]:
     """Переносит сохранённый config_file в поля узла, пропуская закреплённые. Не коммитит."""
     if entity.config_file is None:
@@ -117,7 +134,8 @@ async def apply_stored_config(
         other = await find_repo_owner(db, url, exclude_id=entity.id) if url else None
         if other is not None:
             warnings.append(
-                f"repo.url: репозиторий уже привязан к проекту {other.path_cache} — не изменён"
+                f"repo.url: репозиторий уже привязан {repo_conflict_target(other, access)}"
+                " — не изменён"
             )
         else:
             entity.repo_url = url

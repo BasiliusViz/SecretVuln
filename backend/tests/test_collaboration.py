@@ -58,15 +58,28 @@ async def test_bulk_confirm_skips_closed(client, appsec, db):
     b = await make_finding(db, e, "b", status=FindingStatus.fixed)
     r = await client.post(
         "/api/v1/findings/bulk",
-        json={"ids": [str(a.id), str(b.id), "00000000-0000-0000-0000-000000000000"], "action": "confirm"},
+        json={"ids": [str(a.id), str(b.id)], "action": "confirm"},
         headers=h,
     )
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["applied"] == 1
-    assert {s["id"] for s in body["skipped"]} == {str(b.id), "00000000-0000-0000-0000-000000000000"}
+    assert {s["id"] for s in body["skipped"]} == {str(b.id)}
     await db.refresh(a)
     assert a.status == FindingStatus.confirmed
+
+
+async def test_bulk_unknown_id_rejects_whole_batch(client, appsec, db):
+    _, h = appsec
+    a = await make_finding(db, await make_entity(db, "svc"), "a")
+    r = await client.post(
+        "/api/v1/findings/bulk",
+        json={"ids": [str(a.id), "00000000-0000-0000-0000-000000000000"], "action": "confirm"},
+        headers=h,
+    )
+    assert r.status_code == 404
+    await db.refresh(a)
+    assert a.status == FindingStatus.new
 
 
 async def test_bulk_false_positive_needs_approve(client, developer, appsec, db):

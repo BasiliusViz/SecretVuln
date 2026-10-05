@@ -20,6 +20,8 @@ export interface Group extends GroupBrief {
   description: string | null;
   source: string;
   member_count: number;
+  // только в GET /groups?entity_id=: есть ли у группы finding:read на проекте
+  has_access?: boolean | null;
 }
 
 export interface Finding {
@@ -89,6 +91,8 @@ export interface Decision {
   requested_by_id: string | null;
   decision_comment: string | null;
   created_at: string;
+  entity_path: string | null;
+  can_approve: boolean;
 }
 
 export interface EntityNode {
@@ -97,7 +101,36 @@ export interface EntityNode {
   slug: string;
   path: string;
   parent_id: string | null;
-  description: string | null;
+  description?: string | null;
+  // предок, видимый только как часть пути: серый, без перехода
+  stub?: boolean;
+}
+
+export interface Binding {
+  id: string;
+  group_id: string;
+  group_name: string;
+  role_id: string;
+  role_name: string;
+  entity_id: string | null;
+  // null — на всё дерево
+  entity_path: string | null;
+  created_at: string;
+  created_by: string | null;
+}
+
+export interface RoleGrant {
+  id: string;
+  name: string;
+  grantable: boolean;
+  missing: string[];
+}
+
+export interface EntityBindings {
+  own: Binding[];
+  inherited: Binding[];
+  // только при access:manage на проекте
+  roles: RoleGrant[] | null;
 }
 
 export type SettingField =

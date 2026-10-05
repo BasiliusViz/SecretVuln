@@ -19,6 +19,8 @@ interface Role {
 interface Catalog {
   catalog: Record<string, string[]>;
   actions: string[];
+  // права, которые действуют только в привязке на всё дерево ("group:write")
+  global_only: string[];
 }
 
 const inputStyle = {
@@ -69,6 +71,7 @@ function PermissionMatrix({
             {catalog.actions.map((a) => {
               const valid = catalog.catalog[res].includes(a);
               const on = selected.has(permKey(res, a));
+              const globalOnly = catalog.global_only.includes(permKey(res, a));
               return (
                 <td key={a} style={{ padding: "6px 10px", textAlign: "center" }}>
                   {valid ? (
@@ -81,12 +84,24 @@ function PermissionMatrix({
                   ) : (
                     <span style={{ color: "var(--border)" }}>—</span>
                   )}
+                  {valid && globalOnly && (
+                    <sup style={{ color: "var(--text-muted)", marginLeft: 2 }} title={t("roles.globalOnlyHint")}>
+                      *
+                    </sup>
+                  )}
                 </td>
               );
             })}
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr>
+          <td colSpan={catalog.actions.length + 1} style={{ paddingTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
+            * {t("roles.globalOnlyHint")}
+          </td>
+        </tr>
+      </tfoot>
     </table>
   );
 }

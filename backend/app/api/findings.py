@@ -4,10 +4,10 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Principal, has_permission, require_permission
+from app.api.deps import Principal, ensure, not_found, require_permission
 from app.db.session import get_db
 from app.models import (
     DecisionRequest,
@@ -50,14 +50,41 @@ from app.services.ownership import build_resolver
 router = APIRouter(prefix="/api/v1", tags=["findings"])
 
 
-async def _entity_filter(db: AsyncSession, entity_id: uuid.UUID, include_descendants: bool):
-    """Условие на Finding.entity_id: сам проект или всё его поддерево."""
+async def entity_filter(
+    db: AsyncSession, principal: Principal, entity_id: uuid.UUID, include_descendants: bool
+):
+    """Условие на Finding.entity_id: сам проект или всё его поддерево.
+
+    Узел должен быть виден хотя бы заглушкой (иначе 404); доступная часть
+    поддерева отсекается отдельным фильтром по праву.
+    """
+    entity = await db.get(Entity, entity_id)
+    if entity is None or not principal.access.can_see(entity):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Проект не найден")
     if not include_descendants:
         return Finding.entity_id == entity_id
-    entity = await db.get(Entity, entity_id)
-    if entity is None:
-        return Finding.entity_id == entity_id  # пустой результат
     return Finding.entity_id.in_(subtree_ids(entity))
+
+
+def readable(principal: Principal):
+    """Условие на Finding: проекты, где у вызывающего есть finding:read."""
+    return principal.access.entity_scope("finding:read", Finding.entity_id)
+
+
+async def finding_checked(
+    db: AsyncSession, principal: Principal, finding_id: uuid.UUID, perm: str
+) -> Finding:
+    """Загрузить находку и проверить право на её проект (404 — не читается, 403 — нет права)."""
+    finding = await db.get(Finding, finding_id)
+    if finding is None:
+        raise not_found("Уязвимость")
+    entity = await db.get(Entity, finding.entity_id)
+    ensure(principal, perm, entity, what="Уязвимость")
+    return finding
+
+
+async def finding_path(db: AsyncSession, finding: Finding) -> str:
+    return await db.scalar(select(Entity.path_cache).where(Entity.id == finding.entity_id))
 
 
 async def load_finding(db: AsyncSession, finding_id: uuid.UUID) -> Finding:
@@ -117,9 +144,9 @@ async def list_findings(
     principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[Finding]:
-    q = select(Finding)
+    q = select(Finding).where(readable(principal))
     if entity_id:
-        q = q.where(await _entity_filter(db, entity_id, include_descendants))
+        q = q.where(await entity_filter(db, principal, entity_id, include_descendants))
     if severity:
         q = q.where(Finding.severity == severity)
     if finding_status:
@@ -169,15 +196,14 @@ async def list_findings(
 async def findings_stats(
     entity_id: uuid.UUID | None = None,
     include_descendants: bool = False,
-    _: object = Depends(require_permission("finding", "read")),
+    principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    scope = await _entity_filter(db, entity_id, include_descendants) if entity_id else None
-    q = select(Finding.severity, func.count()).group_by(Finding.severity)
-    q2 = select(Finding.status, func.count()).group_by(Finding.status)
-    if scope is not None:
-        q = q.where(scope)
-        q2 = q2.where(scope)
+    scope = readable(principal)
+    if entity_id:
+        scope = and_(scope, await entity_filter(db, principal, entity_id, include_descendants))
+    q = select(Finding.severity, func.count()).where(scope).group_by(Finding.severity)
+    q2 = select(Finding.status, func.count()).where(scope).group_by(Finding.status)
     by_severity = {sev.value: cnt for sev, cnt in (await db.execute(q)).all()}
     by_status = {st.value: cnt for st, cnt in (await db.execute(q2)).all()}
     total = sum(by_severity.values())
@@ -188,45 +214,43 @@ async def findings_stats(
 async def list_noisy_rules(
     min_decided: int = Query(10, ge=1, le=100000),
     min_fp_ratio: float = Query(0.7, ge=0, le=1),
-    _: object = Depends(require_permission("finding", "read")),
+    principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """Правила, по которым большинство решённых находок — ложные (кандидаты на отключение)."""
-    return await noisy_rules(db, min_decided=min_decided, min_fp_ratio=min_fp_ratio)
+    return await noisy_rules(
+        db, min_decided=min_decided, min_fp_ratio=min_fp_ratio, scope=readable(principal)
+    )
 
 
 @router.get("/findings/by-number/{number}", response_model=FindingDetail)
 async def get_finding_by_number(
     number: int,
-    _: object = Depends(require_permission("finding", "read")),
+    principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> FindingDetail:
-    finding = await db.scalar(select(Finding).where(Finding.number == number))
-    if finding is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
-    return await to_detail(db, finding)
+    finding_id = await db.scalar(select(Finding.id).where(Finding.number == number))
+    if finding_id is None:
+        raise not_found("Уязвимость")
+    return await to_detail(db, await finding_checked(db, principal, finding_id, "finding:read"))
 
 
 @router.get("/findings/{finding_id}", response_model=FindingDetail)
 async def get_finding(
     finding_id: uuid.UUID,
-    _: object = Depends(require_permission("finding", "read")),
+    principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> FindingDetail:
-    finding = await db.get(Finding, finding_id)
-    if finding is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
-    return await to_detail(db, finding)
+    return await to_detail(db, await finding_checked(db, principal, finding_id, "finding:read"))
 
 
 @router.get("/findings/{finding_id}/events", response_model=list[FindingEventRead])
 async def list_finding_events(
     finding_id: uuid.UUID,
-    _: object = Depends(require_permission("finding", "read")),
+    principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[FindingEventRead]:
-    if await db.get(Finding, finding_id) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    await finding_checked(db, principal, finding_id, "finding:read")
     rows = await db.execute(
         select(FindingEvent, User.full_name, User.email)
         .outerjoin(User, User.id == FindingEvent.actor_id)
@@ -256,9 +280,7 @@ async def update_finding_status(
     principal: Principal = Depends(require_permission("finding", "triage")),
     db: AsyncSession = Depends(get_db),
 ) -> Finding:
-    finding = await db.get(Finding, finding_id)
-    if finding is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    finding = await finding_checked(db, principal, finding_id, "finding:triage")
 
     if data.status in DECISION_STATUSES:
         raise HTTPException(
@@ -271,7 +293,9 @@ async def update_finding_status(
             status.HTTP_400_BAD_REQUEST,
             "«Исправлена» ставится автоматически, когда повторный скан не находит уязвимость",
         )
-    if finding.status in DECISION_STATUSES and not has_permission(principal, "finding", "approve"):
+    if finding.status in DECISION_STATUSES and not principal.access.allows(
+        "finding:approve", await finding_path(db, finding)
+    ):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Снять решение может только AppSec (право finding:approve)"
         )
@@ -295,9 +319,7 @@ async def assign_finding(
     principal: Principal = Depends(require_permission("finding", "triage")),
     db: AsyncSession = Depends(get_db),
 ) -> Finding:
-    finding = await db.get(Finding, finding_id)
-    if finding is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    finding = await finding_checked(db, principal, finding_id, "finding:triage")
 
     if data.by_rules:
         new_group = (await build_resolver(db, finding.entity_id)).resolve(finding.file_path)
@@ -330,13 +352,6 @@ async def assign_finding(
 CLOSED_FOR_HELP = {FindingStatus.fixed, *DECISION_STATUSES}
 
 
-async def _finding_or_404(db: AsyncSession, finding_id: uuid.UUID) -> Finding:
-    finding = await db.get(Finding, finding_id)
-    if finding is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
-    return finding
-
-
 @router.post(
     "/findings/{finding_id}/comments",
     response_model=FindingEventRead,
@@ -348,11 +363,13 @@ async def add_comment(
     principal: Principal = Depends(require_permission("finding", "triage")),
     db: AsyncSession = Depends(get_db),
 ) -> FindingEventRead:
-    finding = await _finding_or_404(db, finding_id)
+    finding = await finding_checked(db, principal, finding_id, "finding:triage")
     text = data.text.strip()
     if not text:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Комментарий пустой")
-    if data.resolve_help and not has_permission(principal, "finding", "approve"):
+    if data.resolve_help and not principal.access.allows(
+        "finding:approve", await finding_path(db, finding)
+    ):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Закрыть вопрос может только AppSec (право finding:approve)"
         )
@@ -380,7 +397,7 @@ async def request_help(
     principal: Principal = Depends(require_permission("finding", "triage")),
     db: AsyncSession = Depends(get_db),
 ) -> FindingDetail:
-    finding = await _finding_or_404(db, finding_id)
+    finding = await finding_checked(db, principal, finding_id, "finding:triage")
     if finding.status in CLOSED_FOR_HELP:
         raise HTTPException(status.HTTP_409_CONFLICT, "Уязвимость уже закрыта")
     if finding.help_requested_at is not None:
@@ -406,11 +423,6 @@ async def bulk_action(
 ) -> BulkResult:
     decision: DecisionCreate | None = None
     if data.action == "false_positive":
-        if not has_permission(principal, "finding", "approve"):
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "Отметить ложным сразу может только AppSec (право finding:approve)",
-            )
         try:
             decision = DecisionCreate(
                 decision_type=DecisionType.false_positive,
@@ -423,14 +435,29 @@ async def bulk_action(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Команда не найдена")
 
     ids = list(dict.fromkeys(data.ids))
-    found = {f.id: f for f in await db.scalars(select(Finding).where(Finding.id.in_(ids)))}
+    rows = await db.execute(
+        select(Finding, Entity.path_cache)
+        .join(Entity, Entity.id == Finding.entity_id)
+        .where(Finding.id.in_(ids))
+    )
+    found = {f.id: (f, path) for f, path in rows}
+    # Всё или ничего: хоть одна не читается — 404, хоть на одну нет права — 403
+    access = principal.access
+    if any(i not in found or not access.allows("finding:read", found[i][1]) for i in ids):
+        raise not_found("Уязвимость")
+    if not all(access.allows("finding:triage", path) for _, path in found.values()):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав: finding:triage")
+    if data.action == "false_positive" and not all(
+        access.allows("finding:approve", path) for _, path in found.values()
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Отметить ложным сразу может только AppSec (право finding:approve)",
+        )
     applied = 0
     skipped: list[BulkSkipped] = []
     for finding_id in ids:
-        finding = found.get(finding_id)
-        if finding is None:
-            skipped.append(BulkSkipped(id=finding_id, reason="Уязвимость не найдена"))
-            continue
+        finding = found[finding_id][0]
         if data.action == "confirm":
             if finding.status not in MANUAL_STATUSES:
                 skipped.append(BulkSkipped(id=finding_id, reason="Уже закрыта или решена"))

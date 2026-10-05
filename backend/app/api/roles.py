@@ -61,8 +61,13 @@ def _validate(perm_list: list[Permission]) -> list[tuple[str, str]]:
 
 @router.get("/permissions/catalog")
 async def permission_catalog(_: object = Depends(require_permission("role", "read"))) -> dict:
-    """Каталог для UI: ресурс → допустимые действия."""
-    return {"catalog": perms.CATALOG, "actions": perms.ACTIONS}
+    """Каталог для UI: ресурс → допустимые действия, какие права только глобальные."""
+    return {
+        "catalog": perms.CATALOG,
+        "actions": perms.ACTIONS,
+        "global_only": sorted(perms.GLOBAL_ONLY),
+        "any_binding": sorted(perms.ANY_BINDING),
+    }
 
 
 @router.get("/roles", response_model=list[RoleRead])

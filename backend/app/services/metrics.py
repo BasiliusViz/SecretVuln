@@ -100,14 +100,17 @@ async def _labels(db: AsyncSession, group_by: str, keys: list) -> dict:
 
 
 async def aggregate(
-    db: AsyncSession, query: MetricQuery, *, now: datetime | None = None
+    db: AsyncSession, query: MetricQuery, *, now: datetime | None = None, scope=None
 ) -> list[MetricRow]:
+    """scope — SQL-условие на Finding (доступные вызывающему проекты); None — все."""
     now = now or datetime.now(timezone.utc)
     start = now - timedelta(days=PERIOD_DAYS[query.period])
     time_col = TIME_COLUMN[query.metric]
     value = _value(query.metric, now).label("value")
 
     conds = _metric_conditions(query.metric, now) + await _filter_conditions(db, query)
+    if scope is not None:
+        conds.append(scope)
     if query.metric not in SNAPSHOT or query.group_by == "week":
         conds.append(time_col >= start)
 

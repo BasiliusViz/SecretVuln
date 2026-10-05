@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Principal, require_permission
+from app.api.deps import Principal, ensure, require_permission
 from app.db.session import get_db
 from app.models import Entity, OwnershipRule, RuleSource, SlaPolicy, UserGroup
 from app.schemas.entity_settings import (
@@ -24,7 +24,7 @@ from app.schemas.entity_settings import (
     RuleRead,
     UnpinRequest,
 )
-from app.services.config_file import apply_stored_config, export_config
+from app.services.config_file import apply_stored_config, export_config, repo_conflict_target
 from app.services.entity_paths import subtree_ids
 from app.services.entity_settings import (
     FIELD_PIN,
@@ -43,10 +43,13 @@ router = APIRouter(prefix="/api/v1/entities", tags=["entity-settings"])
 tags_router = APIRouter(prefix="/api/v1", tags=["entity-settings"])
 
 
-async def _entity_or_404(db: AsyncSession, entity_id: uuid.UUID) -> Entity:
+async def _entity_or_404(
+    db: AsyncSession, entity_id: uuid.UUID, principal: Principal, perm: str
+) -> Entity:
     entity = await db.get(Entity, entity_id)
     if entity is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Проект не найден")
+    ensure(principal, perm, entity, what="Проект")
     return entity
 
 
@@ -109,21 +112,26 @@ def _pin(entity: Entity, *keys: str) -> None:
 @router.get("/{entity_id}/settings", response_model=EntitySettingsRead)
 async def get_settings_(
     entity_id: uuid.UUID,
-    _: object = Depends(require_permission("entity", "read")),
+    principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> EntitySettingsRead:
-    return await settings_read(db, await _entity_or_404(db, entity_id))
+    return await settings_read(db, await _entity_or_404(db, entity_id, principal, "entity:read"))
 
 
 @router.patch("/{entity_id}/settings", response_model=EntitySettingsRead)
 async def update_settings(
     entity_id: uuid.UUID,
     data: EntitySettingsUpdate,
-    _: object = Depends(require_permission("entity", "write")),
+    principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> EntitySettingsRead:
-    entity = await _entity_or_404(db, entity_id)
+    entity = await _entity_or_404(db, entity_id, principal, "entity:read")
     fields = data.model_dump(exclude_unset=True)
+    # Смена политики SLA — отдельное право `sla:assign`; остальное — `entity:write`
+    if "sla_policy_id" in fields:
+        ensure(principal, "sla:assign", entity, what="Проект")
+    if not fields or fields.keys() - {"sla_policy_id"}:
+        ensure(principal, "entity:write", entity, what="Проект")
 
     # Политика и теги не входят в .secretvuln.yml — не закрепляются
     sla_changed = "sla_policy_id" in fields and fields["sla_policy_id"] != entity.sla_policy_id
@@ -155,7 +163,7 @@ async def update_settings(
         if other is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"Репозиторий уже привязан к проекту {other.path_cache}",
+                f"Репозиторий уже привязан {repo_conflict_target(other, principal.access)}",
             )
 
     for key, value in fields.items():
@@ -176,10 +184,10 @@ async def update_settings(
 async def replace_rules(
     entity_id: uuid.UUID,
     rules: list[RuleIn] = Body(..., max_length=200),
-    _: object = Depends(require_permission("entity", "write")),
+    principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> EntitySettingsRead:
-    entity = await _entity_or_404(db, entity_id)
+    entity = await _entity_or_404(db, entity_id, principal, "entity:write")
     for rule in rules:
         if await db.get(UserGroup, rule.group_id) is None:
             raise HTTPException(
@@ -200,13 +208,15 @@ async def replace_rules(
 async def unpin_setting(
     entity_id: uuid.UUID,
     data: UnpinRequest,
-    _: object = Depends(require_permission("entity", "write")),
+    principal: Principal = Depends(require_permission("entity", "write")),
     db: AsyncSession = Depends(get_db),
 ) -> EntitySettingsRead:
     """«Вернуть к файлу»: снять закрепление и сразу подставить значение из файла."""
-    entity = await _entity_or_404(db, entity_id)
+    entity = await _entity_or_404(db, entity_id, principal, "entity:write")
     entity.pinned_fields = [f for f in entity.pinned_fields if f != data.field]
-    warnings = await apply_stored_config(db, entity, only={data.field})
+    warnings = await apply_stored_config(
+        db, entity, only={data.field}, access=principal.access
+    )
     await db.commit()
     return await settings_read(db, entity, warnings)
 
@@ -214,10 +224,10 @@ async def unpin_setting(
 @router.get("/{entity_id}/config.yml", response_class=PlainTextResponse)
 async def download_config(
     entity_id: uuid.UUID,
-    _: object = Depends(require_permission("entity", "read")),
+    principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> PlainTextResponse:
-    entity = await _entity_or_404(db, entity_id)
+    entity = await _entity_or_404(db, entity_id, principal, "entity:read")
     return PlainTextResponse(
         await export_config(db, entity),
         media_type="application/yaml; charset=utf-8",
@@ -232,7 +242,7 @@ async def reassign_subtree(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
     """«Переназначить по правилам»: применить правила к открытым уязвимостям поддерева сейчас."""
-    entity = await _entity_or_404(db, entity_id)
+    entity = await _entity_or_404(db, entity_id, principal, "entity:write")
     total = 0
     for node_id in list(await db.scalars(subtree_ids(entity))):
         total += await reassign_entity(db, node_id, actor_id=principal.user.id)
@@ -242,10 +252,10 @@ async def reassign_subtree(
 
 @tags_router.get("/tags", response_model=list[str])
 async def list_tags(
-    _: object = Depends(require_permission("entity", "read")),
+    principal: Principal = Depends(require_permission("entity", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[str]:
-    """Все теги, которые уже есть у проектов, — для подсказок."""
+    """Теги видимых проектов — для подсказок."""
     tag = func.unnest(Entity.tags).label("tag")
-    sub = select(tag).subquery()
+    sub = select(tag).where(principal.access.filter("entity:read", Entity.path_cache)).subquery()
     return list(await db.scalars(select(sub.c.tag).distinct().order_by(sub.c.tag)))

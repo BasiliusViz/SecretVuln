@@ -131,6 +131,18 @@ async def ensure_path(
     return parent, created
 
 
+async def nearest_existing(db: AsyncSession, path: str) -> Entity | None:
+    """Самый глубокий существующий узел среди пути и его предков (None — нет ни одного)."""
+    parts = split_path(path)
+    prefixes = ["/".join(parts[:i]) for i in range(1, len(parts) + 1)]
+    rows = await db.scalars(select(Entity).where(Entity.path_cache.in_(prefixes)))
+    by_path = {e.path_cache: e for e in rows}
+    for prefix in reversed(prefixes):
+        if prefix in by_path:
+            return by_path[prefix]
+    return None
+
+
 def subtree_ids(entity: Entity) -> Select:
     """id узла и всех его потомков — для фильтров «включая вложенные»."""
     return select(Entity.id).where(

@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import router as auth_router
+from app.api.bindings import router as bindings_router
 from app.api.decisions import router as decisions_router
 from app.api.entities import router as entities_router
 from app.api.entity_settings import router as entity_settings_router
@@ -46,6 +47,7 @@ app.include_router(imports_router)
 app.include_router(findings_router)
 app.include_router(decisions_router)
 app.include_router(groups_router)
+app.include_router(bindings_router)
 app.include_router(roles_router)
 app.include_router(sla_policies_router)
 app.include_router(metrics_router)

@@ -25,4 +25,7 @@ class UserRead(BaseModel):
     is_active: bool
     is_superuser: bool
     roles: list[str] = []
+    # «есть хоть где-то» — для меню
     permissions: list[str] = []
+    # право → "*" (везде) или префиксы путей проектов — для кнопок
+    scoped_permissions: dict[str, str | list[str]] = {}

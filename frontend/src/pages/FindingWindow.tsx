@@ -66,12 +66,17 @@ export function FindingWindow() {
     void load();
   }, [load]);
 
-  const canTriage = can("finding:triage");
-  const canApprove = can("finding:approve");
+  // Права — на проекте находки (до загрузки — «хоть где-то», кнопки всё равно не видны)
+  const entityPath = finding?.entity_path ?? null;
+  const entityId = finding?.entity_id ?? null;
+  const canTriage = can("finding:triage", entityPath);
+  const canApprove = can("finding:approve", entityPath);
   const canAssign = canTriage && can("group:read");
   useEffect(() => {
-    if (canAssign) void apiJson<Group[]>("/api/v1/groups").then((r) => setGroups(r.data ?? []));
-  }, [canAssign]);
+    if (!canAssign || !entityId) return;
+    // has_access у каждой группы: есть ли у неё доступ к проекту находки
+    void apiJson<Group[]>(`/api/v1/groups?entity_id=${entityId}`).then((r) => setGroups(r.data ?? []));
+  }, [canAssign, entityId]);
 
   if (loadError) return <p style={MUTED}>{loadError}</p>;
   if (!finding) return <p style={MUTED}>{t("common.loading")}</p>;
@@ -105,6 +110,8 @@ export function FindingWindow() {
   };
   const reassign = (value: string) => {
     if (!value) return;
+    const group = groups.find((g) => g.id === value);
+    if (group?.has_access === false && !window.confirm(t("window.noAccessConfirm", { name: group.name }))) return;
     void act(apiJson(`${base}/assign`, "POST", value === "__rules" ? { by_rules: true } : { group_id: value }));
   };
   const decide = async (decision: Decision, approve: boolean) => {
@@ -240,7 +247,7 @@ export function FindingWindow() {
               <option value="__rules">{t("window.byRules")}</option>
               {groups.map((g) => (
                 <option key={g.id} value={g.id}>
-                  {g.name}
+                  {g.has_access === false ? `${g.name} — ${t("window.noAccess")}` : g.name}
                 </option>
               ))}
             </select>

@@ -18,7 +18,7 @@ Vulnerability management платформа: импорт находок без�
 - **Одна сущность Entity («Проект»)** вместо Product/Engagement/Test — дерево-папка без типов и ограничений вложенности. Узел может и содержать детей, и принимать импорты. Адрес — `path_cache` (`fintech/payments/api`), настройки (`owner_group_id`, `repo_url`, `default_branch`…) наследуются вниз.
 - **Finding («Уязвимость»)**: дедуп по `(entity_id, fingerprint)`; `raw` JSONB — исходный SARIF result, источник правды. Номер `SV-N`. История — `finding_events` через `record_event`.
 - **Процесс**: бэклог только из основной ветки; автозакрытие исчезнувших находок в объёме `(актив, сканер, scan_scope)`; «ложное»/«риск принят» — через `decision_requests` с одобрением правом `finding:approve`.
-- **Права**: пользователь → группы → роли → casbin-политики (ресурс + действие, каталог `app/authz/permissions.py`). `require_permission` на каждом эндпоинте, `is_superuser` обходит. Права пока глобальные (фаза 2 — поддеревья).
+- **Права**: пользователь → группы → привязки (группа + роль + проект, `NULL` = всё дерево) → casbin-политики роли (ресурс + действие, каталог `app/authz/permissions.py`). Привязка к узлу действует на поддерево. `require_permission` на эндпоинте + `ensure` на объекте (чужое → 404), `Access` из `services/access.py`; `is_superuser` обходит.
 - **Группы LDAP** маппятся в веб-интерфейсе, не в конфиге. В env — только подключение к LDAP.
 - **AI** (план): отдельная таблица `ai_analyses` (one-to-many к findings), не встраивать выводы в findings.
 - **Дашборд**: виджет = JSON `{chart_type, group_by, period, filters}`, generic-агрегаты на бэкенде, ничего не хардкодить под конкретный график.
@@ -38,16 +38,18 @@ Vulnerability management платформа: импорт находок без�
 | `core/config.py` | Настройки (`SV_*`), `database_url_sync` для Alembic и Casbin |
 | `core/security.py` | bcrypt-пароли, JWT (создание и разбор) |
 | `db/session.py` | Async engine, зависимость `get_db` |
-| `api/deps.py` | `Principal`, `get_current_principal`, `has_permission`, `require_permission` |
+| `api/deps.py` | `Principal` (с `access`), `get_current_principal`, `require_permission`, `ensure` |
 | `api/entities.py` | CRUD дерева проектов, защита от циклов |
 | `api/imports.py` | Загрузка SARIF: метаданные CI, проверка ветки |
 | `api/findings.py` | Список, статистика, история, поиск по номеру, смена статуса |
 | `api/decisions.py` | Запросы «ложное / риск принят», одобрение и отклонение |
 | `api/auth.py`, `api/groups.py`, `api/roles.py` | Вход и LDAP, группы, роли и каталог прав |
+| `api/bindings.py` | Привязки «группа + роль + проект», делегирование |
 | `authz/enforcer.py`, `authz/permissions.py`, `authz/rbac_model.conf` | Casbin: enforcer, каталог прав, модель |
 | `models/` | SQLAlchemy: `entity`, `finding`, `finding_event`, `decision_request`, `import_`, `user`, `user_group`, `role` |
 | `schemas/` | Pydantic по тем же сущностям |
 | `services/import_processing.py` | `apply_import`: создание, дедуп, переоткрытие, автозакрытие |
+| `services/access.py` | `Access`: права по поддеревьям, SQL-фильтры видимости |
 | `services/entity_tree.py` | Наследование настроек вниз по дереву (`resolve_default_branch`) |
 | `services/events.py` | `record_event` — запись истории |
 | `services/decisions.py` | Создание, одобрение, отклонение запросов |
@@ -85,7 +87,7 @@ Vulnerability management платформа: импорт находок без�
 
 - **Этапы 1–2** — в `main`, запушены в `github.com/BasiliusViz/SecretVuln`. **Этап 3 «Сроки и метрики»** — сделан и прошёл ревью, в `main`, запушен: SLA-политики и `due_at`, теги проектов, просрочки, «Шумные правила», метрики на дашборде (`POST /metrics/aggregate`).
 - Открыто по этапу 3: переоткрытие обнуляет `resolved_at`, поэтому `resolved`/`mttr_days` задним числом теряют прошлые закрытия (по спеке; позже — брать из `finding_events`).
-- **Этап 4 «Права на поддерево»** — спека `docs/superpowers/specs/2026-10-05-subtree-access-design.md` (привязки группа+роль+проект, делегирование `access:manage`, `sla:assign`).
+- **Этап 4 «Права на поддерево»** — сделан, прошёл ревью, в `main`: привязки группа+роль+проект (`role_bindings`), заглушки предков в дереве, делегирование `access:manage`, `sla:assign`, вкладка проекта «Доступ». Подробно — `docs/architecture.md`, раздел «Авторизация».
 - Бэклог MVP: дашборд-виджеты, аудит-лог + `uploaded_by`, Helm chart.
 
 ## Документы
