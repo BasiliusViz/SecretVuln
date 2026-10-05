@@ -2,7 +2,15 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class Uploader(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    email: str
+    display_name: str | None = Field(default=None, validation_alias="full_name")
 
 
 class ImportRead(BaseModel):
@@ -10,6 +18,8 @@ class ImportRead(BaseModel):
 
     id: uuid.UUID
     entity_id: uuid.UUID
+    # грузить через selectinload / refresh — ленивая загрузка в async недоступна
+    uploaded_by: Uploader | None = None
     filename: str
     scanner: str | None
     branch: str | None

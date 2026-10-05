@@ -1,10 +1,12 @@
 import json
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import Principal, ensure, not_found, require_permission
 from app.api.entities import ensure_path_write, get_entity_checked
@@ -111,11 +113,21 @@ async def _create_import(
     db.add(import_record)
     audit.record_entities_created(db, principal.user, created, ip=ip)
     try:
+        await db.flush()
+        audit.record_audit(
+            db,
+            principal.user,
+            audit.IMPORT_CREATE,
+            target=("import", import_record.id, filename),
+            entity=entity,
+            changes=audit.snapshot(import_record, audit.FIELDS["import"]),
+            ip=ip,
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Конфликт при создании импорта, повторите попытку")
-    await db.refresh(import_record)
+    await db.refresh(import_record, ["uploaded_by"])
 
     from app.worker import enqueue_import
     await enqueue_import(str(import_record.id))
@@ -230,6 +242,7 @@ async def list_entity_imports(
     await get_entity_checked(db, principal, entity_id, "import:read")
     result = await db.scalars(
         select(Import)
+        .options(selectinload(Import.uploaded_by))
         .where(Import.entity_id == entity_id)
         .order_by(Import.created_at.desc())
     )
@@ -238,15 +251,18 @@ async def list_entity_imports(
 
 @router.get("/imports", response_model=list[ImportRead])
 async def list_all_imports(
+    uploaded_by: Literal["me"] | None = None,
     principal: Principal = Depends(require_permission("import", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> list[Import]:
-    result = await db.scalars(
+    query = (
         select(Import)
+        .options(selectinload(Import.uploaded_by))
         .where(principal.access.entity_scope("import:read", Import.entity_id))
-        .order_by(Import.created_at.desc())
-        .limit(100)
     )
+    if uploaded_by == "me":
+        query = query.where(Import.uploaded_by_id == principal.user.id)
+    result = await db.scalars(query.order_by(Import.created_at.desc()).limit(100))
     return list(result)
 
 
@@ -256,7 +272,7 @@ async def get_import(
     principal: Principal = Depends(require_permission("import", "read")),
     db: AsyncSession = Depends(get_db),
 ) -> Import:
-    imp = await db.get(Import, import_id)
+    imp = await db.get(Import, import_id, options=[selectinload(Import.uploaded_by)])
     if imp is None:
         raise not_found("Импорт")
     ensure(principal, "import:read", await db.get(Entity, imp.entity_id), what="Импорт")
