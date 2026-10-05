@@ -311,7 +311,7 @@ function BindingManager({
               {t("groups.addRole")}
             </button>
           </div>
-          {error && <div style={{ color: "#A32D2D", fontSize: 12, marginTop: 6 }}>{error}</div>}
+          {error && <div style={{ color: "var(--sev-critical-text)", fontSize: 12, marginTop: 6 }}>{error}</div>}
         </>
       )}
     </div>

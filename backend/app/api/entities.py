@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Principal, ensure, require_permission
+from app.api.deps import Principal, ensure, get_current_principal, require_permission
 from app.db.session import get_db
 from app.models import Entity
 from app.schemas.entity import EntityCreate, EntityRead, EntityStub, EntityUpdate, EntityUpsert
@@ -65,7 +65,11 @@ async def ensure_path_write(db: AsyncSession, access: Access | Principal, path: 
         split_path(path)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
-    ensure(access, "entity:write", await nearest_existing(db, path), what="Проект")
+    if isinstance(access, Principal):
+        access = access.access
+    # Всегда 403, не 404: иначе по ответу видно, существует ли невидимый предок
+    if not access.allows("entity:write", await nearest_existing(db, path)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав: entity:write")
 
 
 async def _ensure_sla_on_move(
@@ -114,7 +118,8 @@ CONFLICT = "На этом уровне уже есть проект с таки�
 
 @router.get("", response_model=list[EntityRead | EntityStub])
 async def list_entities(
-    principal: Principal = Depends(require_permission("entity", "read")),
+    # без ворот entity:read: заглушки своих веток видны по любому праву на поддерево
+    principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ) -> list[EntityRead | EntityStub]:
     """Плоский список видимых узлов; дерево собирает клиент по parent_id.

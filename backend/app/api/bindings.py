@@ -63,9 +63,12 @@ async def _save(db: AsyncSession, binding: RoleBinding) -> BindingRead:
     db.add(binding)
     try:
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, DUPLICATE)
+        if "uq_role_bindings_group_role_entity" in str(exc.orig):
+            raise HTTPException(status.HTTP_409_CONFLICT, DUPLICATE)
+        # группу, роль или проект удалили параллельно (нарушен внешний ключ)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Группа, роль или проект не найдены")
     await db.refresh(binding, ["group", "role", "entity"])
     return to_read(binding)
 

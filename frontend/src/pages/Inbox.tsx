@@ -87,7 +87,9 @@ export function Inbox() {
       targets.length > 0 &&
       targets.every((id) => {
         const f = items?.find((x) => x.id === id);
-        return !!f && can(perm, paths[f.entity_id] ?? null);
+        // без пути проекта (ещё не загружен) — не разрешаем
+        const path = f ? paths[f.entity_id] : undefined;
+        return !!path && can(perm, path);
       }),
     [targets, items, paths, can],
   );

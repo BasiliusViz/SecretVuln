@@ -258,7 +258,7 @@ export function ProjectSettings() {
         onChange={setTab}
       />
       {tab === "access" ? (
-        <ProjectAccess entity={entity} />
+        <ProjectAccess key={entity.id} entity={entity} />
       ) : (
       <>
       <section className="card" style={SECTION}>

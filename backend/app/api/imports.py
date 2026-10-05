@@ -182,6 +182,11 @@ async def create_import_by_path(
             entity, _ = await ensure_path(db, project_path, create=False)
         except ValueError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+        # Невидимый проект неотличим от отсутствующего: тот же ответ
+        if entity is not None and not principal.access.can_see(entity):
+            if auto_create:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав: entity:write")
+            entity = None
         if entity is None:
             if not auto_create:
                 raise HTTPException(

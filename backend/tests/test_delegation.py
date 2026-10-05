@@ -128,3 +128,30 @@ async def test_binding_gives_access_and_cascade_on_delete(client, db, two_teams,
     await db.delete(extra)
     await db.commit()
     assert await db.scalar(select(RoleBinding).where(RoleBinding.entity_id == extra_id)) is None
+
+
+async def test_any_binding_perms_count_in_not_stronger_rule(client, db, two_teams, make_user, grant):
+    """Роль с group:read выдать нельзя, если у выдающего group:read нет нигде."""
+    from app.authz.enforcer import set_role_permissions
+    from app.models import Role, UserGroup
+    from app.models.user_group import GroupSource
+
+    t = two_teams
+    role = Role(name="Только справочник групп")
+    team = UserGroup(name="Цель", source=GroupSource.manual)
+    db.add_all([role, team])
+    await db.commit()
+    set_role_permissions(role.name, [("group", "read")])
+    lead, h = await make_user("lead-no-groups@test.local")
+    # access:manage без group:read
+    mgr = Role(name="Только доступ")
+    db.add(mgr)
+    await db.commit()
+    set_role_permissions(mgr.name, [("access", "manage"), ("entity", "read")])
+    await grant(lead, "Только доступ", t.a)
+    r = await client.post(
+        f"/api/v1/entities/{t.a.id}/bindings",
+        json={"group_id": str(team.id), "role_id": str(role.id)},
+        headers=h,
+    )
+    assert r.status_code == 403, r.text

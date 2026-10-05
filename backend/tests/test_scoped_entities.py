@@ -67,7 +67,8 @@ async def test_upsert_by_path_needs_write_on_nearest_ancestor(client, two_teams)
     r = await client.put("/api/v1/entities/by-path/a/new/deep", json={}, headers=lead_a)
     assert r.status_code == 200
     r = await client.put("/api/v1/entities/by-path/b/new", json={}, headers=lead_a)
-    assert r.status_code == 404  # ближайший предок b не виден
+    # невидимый предок b неотличим от отсутствующего корня: оба 403
+    assert r.status_code == 403
     r = await client.put("/api/v1/entities/by-path/zzz", json={}, headers=lead_a)
     assert r.status_code == 403
 

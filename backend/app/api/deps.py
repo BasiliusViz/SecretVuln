@@ -24,7 +24,8 @@ _bearer = HTTPBearer(auto_error=False)
 _READ_OF = {
     "entity": "entity:read",
     "finding": "finding:read",
-    "import": "import:read",
+    # проект виден в дереве по entity:read — для него 403, а не 404
+    "import": "entity:read",
     "sla": "entity:read",
     "access": "entity:read",
 }

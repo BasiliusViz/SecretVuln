@@ -8,7 +8,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.authz.permissions import is_scoped
+from app.authz.permissions import ANY_BINDING, is_scoped
 from app.models import Entity, Role, RoleBinding
 from app.schemas.binding import BindingRead
 from app.services.access import Access, casbin_rule, ancestors
@@ -34,8 +34,14 @@ def missing_for(access: Access, perms: set[str], entity: Entity) -> list[str]:
     """Действующие на поддереве права роли, которых нет у вызывающего на проекте.
 
     Глобальные права роли не учитываются: в привязке к проекту они не действуют.
+    Права «из любой привязки» (`group:read`, `sla:read`) действуют везде — их нужно иметь хоть где-то.
     """
-    return sorted(p for p in perms if is_scoped(p) and not access.allows(p, entity))
+    return sorted(
+        p
+        for p in perms
+        if (p in ANY_BINDING and not access.anywhere(p))
+        or (is_scoped(p) and not access.allows(p, entity))
+    )
 
 
 def is_access_admin(access: Access) -> bool:

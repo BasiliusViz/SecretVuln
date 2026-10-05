@@ -26,8 +26,11 @@ async def test_upload_by_node(client, two_teams):
         "/api/v1/imports", data={"entity_id": str(t.b_svc.id)}, files=_files(), headers=h
     )
     assert r.status_code == 404
-    r = await client.post("/api/v1/imports", data={"project_path": "b/svc"}, files=_files(), headers=h)
-    assert r.status_code == 404
+    # чужой проект по пути неотличим от несуществующего: тот же код и текст
+    hidden = await client.post("/api/v1/imports", data={"project_path": "b/svc"}, files=_files(), headers=h)
+    missing = await client.post("/api/v1/imports", data={"project_path": "b/nope"}, files=_files(), headers=h)
+    assert hidden.status_code == missing.status_code == 404
+    assert hidden.json()["detail"].replace("b/svc", "X") == missing.json()["detail"].replace("b/nope", "X")
 
 
 async def test_auto_create_under_nearest_ancestor(client, two_teams):
@@ -47,7 +50,12 @@ async def test_auto_create_under_nearest_ancestor(client, two_teams):
         "/api/v1/imports", data={"project_path": "b/new", "auto_create": "true"},
         files=_files(), headers=h,
     )
-    assert r.status_code == 404
+    assert r.status_code == 403  # как для несуществующего корня
+    r = await client.post(
+        "/api/v1/imports", data={"project_path": "b/svc", "auto_create": "true"},
+        files=_files(), headers=h,
+    )
+    assert r.status_code == 403
 
 
 async def test_config_needs_entity_write_on_node(client, two_teams, make_user, grant):
