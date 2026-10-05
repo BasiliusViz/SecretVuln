@@ -363,3 +363,41 @@ async def test_sla_policies(client, db, admin):
     ]
     assert rows[0].changes["days_high"] == 5
     assert rows[1].changes == {"days_high": [5, 7]}
+
+
+async def test_group_and_role_delete_log_cascaded_bindings(client, db, two_teams, admin):
+    from app.models import Role, RoleBinding, UserGroup
+
+    t = two_teams
+    h = admin[1]
+    role = (
+        await client.post(
+            "/api/v1/roles",
+            json={"name": "Tmp", "permissions": [{"resource": "entity", "action": "read"}]},
+            headers=h,
+        )
+    ).json()
+    g1, g2 = UserGroup(name="G1"), UserGroup(name="G2")
+    db.add_all([g1, g2])
+    await db.flush()
+    db.add_all([
+        RoleBinding(group_id=g1.id, role_id=role["id"], entity_id=t.a.id),
+        RoleBinding(group_id=g2.id, role_id=role["id"], entity_id=None),
+    ])
+    await db.commit()
+
+    assert (await client.delete(f"/api/v1/groups/{g1.id}", headers=h)).status_code == 204
+    (cascaded,) = await _log(db, audit.BINDING_DELETE)
+    assert cascaded.entity_id == t.a.id
+    assert cascaded.changes == {
+        "group": "G1", "role": "Tmp", "entity": "a", "cascade": audit.GROUP_DELETE,
+    }
+    # руководитель a видит, что доступ к его ветке пропал
+    items = (await client.get("/api/v1/audit", headers=t.lead_a[1])).json()["items"]
+    assert [i["action"] for i in items] == [audit.BINDING_DELETE]
+
+    assert (await client.delete(f"/api/v1/roles/{role['id']}", headers=h)).status_code == 204
+    rows = await _log(db, audit.BINDING_DELETE)
+    assert len(rows) == 2
+    assert rows[1].entity_id is None and rows[1].changes["cascade"] == audit.ROLE_DELETE
+    assert rows[1].changes["group"] == "G2"

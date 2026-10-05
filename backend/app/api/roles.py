@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bindings import record_cascade_delete
 from app.api.deps import Principal, require_permission
 from app.authz import permissions as perms
 from app.authz.enforcer import (
@@ -18,7 +19,7 @@ from app.authz.enforcer import (
     set_role_permissions,
 )
 from app.db.session import get_db
-from app.models import Role
+from app.models import Role, RoleBinding
 from app.services import audit
 from app.schemas.role import (
     Permission,
@@ -196,6 +197,9 @@ async def delete_role(
     role = await _get_or_404(role_id, db)
     if role.is_builtin:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Встроенную роль нельзя удалить")
+    await record_cascade_delete(
+        db, principal, request, audit.ROLE_DELETE, where=RoleBinding.role_id == role.id
+    )
     _record(db, principal, request, audit.ROLE_DELETE, role, {
         **audit.snapshot(role, audit.FIELDS["role"]),
         "permissions": _perm_list(role_permissions(role.name)),

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.bindings import record_cascade_delete
 from app.api.deps import Principal, not_found, require_permission
 from app.db.session import get_db
 from app.models import Entity, Role, RoleBinding, User, UserGroup
@@ -190,6 +191,9 @@ async def delete_group(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     group = await _get_or_404(group_id, db)
+    await record_cascade_delete(
+        db, principal, request, audit.GROUP_DELETE, where=RoleBinding.group_id == group.id
+    )
     _record(db, principal, request, audit.GROUP_DELETE, group,
             audit.snapshot(group, audit.FIELDS["group"]))
     await db.delete(group)

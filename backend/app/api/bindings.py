@@ -69,8 +69,12 @@ def _record(
     group: UserGroup,
     role: Role,
     entity: Entity | None,
+    cascade: str | None = None,
 ) -> None:
-    """Привязка на проект — событие проекта, на всё дерево — глобальное."""
+    """Привязка на проект — событие проекта, на всё дерево — глобальное.
+
+    cascade: действие, из-за которого привязка удалена каскадом (`group.delete`…).
+    """
     where = entity.path_cache if entity is not None else "*"
     audit.record_audit(
         db,
@@ -82,6 +86,7 @@ def _record(
             "group": group.name,
             "role": role.name,
             "entity": entity.path_cache if entity is not None else None,
+            **({"cascade": cascade} if cascade else {}),
         },
         ip=audit.client_ip(request),
     )
@@ -107,6 +112,20 @@ async def _save(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Группа, роль или проект не найдены")
     await db.refresh(binding, ["group", "role", "entity"])
     return to_read(binding)
+
+
+async def record_cascade_delete(
+    db: AsyncSession, principal: Principal, request: Request, cascade: str, *, where
+) -> None:
+    """`binding.delete` на каждую привязку, которую снесёт каскад удаления группы/роли.
+
+    Иначе руководитель проекта не увидит в журнале, что доступ к его ветке пропал.
+    """
+    for binding in await db.scalars(select(RoleBinding).where(where)):
+        _record(
+            db, principal, request, audit.BINDING_DELETE,
+            binding, binding.group, binding.role, binding.entity, cascade=cascade,
+        )
 
 
 # --- привязки проекта ---
