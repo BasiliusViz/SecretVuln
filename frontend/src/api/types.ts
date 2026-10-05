@@ -232,3 +232,67 @@ export interface BulkResult {
   applied: number;
   skipped: { id: string; reason: string }[];
 }
+
+export interface UserBrief {
+  id: string;
+  email: string;
+  display_name: string | null;
+}
+
+export interface ImportRecord {
+  id: string;
+  entity_id: string;
+  filename: string;
+  scanner: string | null;
+  status: string;
+  stats: { created?: number; updated?: number; duplicates?: number; total_results?: number };
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+  uploaded_by: UserBrief | null;
+}
+
+/** Строка журнала аудита. `changes`: значение `[было, стало]` — правка поля, иначе — просто значение */
+export interface AuditEntry {
+  id: string;
+  created_at: string;
+  actor_type: "user" | "system";
+  actor_id: string | null;
+  actor_label: string | null;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  target_label: string | null;
+  entity_id: string | null;
+  entity_path: string | null;
+  ip: string | null;
+  changes: Record<string, unknown> | null;
+}
+
+export interface AuditPage {
+  items: AuditEntry[];
+  total: number;
+}
+
+/** Фильтры GET /audit; `action` — точные действия или префиксы с точкой (`binding.`), объединяются через ИЛИ */
+export interface AuditQuery {
+  entity_id?: string;
+  subtree?: boolean;
+  actor?: string;
+  action?: string[];
+  date_from?: string;
+  date_to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Группы фильтра «Действие» → префиксы для повторяющегося `action` */
+export const AUDIT_ACTION_GROUPS: Record<string, string[]> = {
+  auth: ["auth."],
+  projects: ["entity.", "ownership.", "findings."],
+  access: ["binding."],
+  groups: ["group."],
+  roles: ["role."],
+  sla: ["sla_policy."],
+  imports: ["import."],
+};
