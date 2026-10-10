@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import Principal, ensure, not_found, require_permission
 from app.db.session import get_db
 from app.models import (
+    AiVerdict,
     DecisionRequest,
     DecisionStatus,
     Entity,
@@ -37,6 +38,7 @@ from app.schemas.finding import (
     NoisyRule,
 )
 from app.schemas.finding_event import FindingEventRead
+from app.services.ai_analyses import AnalysisError, analysis_of_finding
 from app.services.code_links import build_code_url, guess_repo_type
 from app.services.decisions import DecisionError, create_request
 from app.services.entity_paths import subtree_ids
@@ -124,12 +126,14 @@ async def to_detail(db: AsyncSession, finding: Finding) -> FindingDetail:
     })
 
 
-@router.get("/findings", response_model=list[FindingRead])
-async def list_findings(
+async def findings_query(
+    db: AsyncSession,
+    principal: Principal,
+    *,
     entity_id: uuid.UUID | None = None,
     include_descendants: bool = False,
     severity: Severity | None = None,
-    finding_status: list[FindingStatus] | None = Query(None, alias="status"),
+    statuses: list[FindingStatus] | None = None,
     scanner: str | None = None,
     assignee_group_id: uuid.UUID | None = None,
     unassigned: bool = False,
@@ -137,20 +141,19 @@ async def list_findings(
     help_requested: bool = False,
     pending_decision: bool = False,
     overdue: bool = False,
-    tag: str | None = Query(None, max_length=64),
-    order: Literal["last_seen", "severity", "number", "due_at"] = "last_seen",
-    limit: int = Query(100, le=500),
-    offset: int = Query(0, ge=0),
-    principal: Principal = Depends(require_permission("finding", "read")),
-    db: AsyncSession = Depends(get_db),
-) -> list[Finding]:
+    tag: str | None = None,
+    ai_verdicts: list[AiVerdict] | None = None,
+    no_ai_verdict: bool = False,
+    order: str = "last_seen",
+):
+    """Запрос списка находок с фильтрами — общий для REST и MCP."""
     q = select(Finding).where(readable(principal))
     if entity_id:
         q = q.where(await entity_filter(db, principal, entity_id, include_descendants))
     if severity:
         q = q.where(Finding.severity == severity)
-    if finding_status:
-        q = q.where(Finding.status.in_(finding_status))
+    if statuses:
+        q = q.where(Finding.status.in_(statuses))
     if scanner:
         q = q.where(Finding.scanner == scanner)
     if assignee_group_id:
@@ -163,6 +166,12 @@ async def list_findings(
         q = q.where(Finding.status.in_(OPEN_STATUSES), Finding.due_at < func.now())
     if tag:
         q = q.where(Finding.entity_id.in_(entities_with_tag(tag.strip().lower())))
+    if ai_verdicts and no_ai_verdict:
+        q = q.where(or_(Finding.ai_verdict.in_(ai_verdicts), Finding.ai_verdict.is_(None)))
+    elif ai_verdicts:
+        q = q.where(Finding.ai_verdict.in_(ai_verdicts))
+    elif no_ai_verdict:
+        q = q.where(Finding.ai_verdict.is_(None))
     if pending_decision:
         q = q.where(
             select(DecisionRequest.id)
@@ -188,6 +197,39 @@ async def list_findings(
         q = q.order_by(Finding.due_at.asc().nulls_last(), Finding.number)
     else:
         q = q.order_by(Finding.last_seen.desc())
+    return q
+
+
+@router.get("/findings", response_model=list[FindingRead])
+async def list_findings(
+    entity_id: uuid.UUID | None = None,
+    include_descendants: bool = False,
+    severity: Severity | None = None,
+    finding_status: list[FindingStatus] | None = Query(None, alias="status"),
+    scanner: str | None = None,
+    assignee_group_id: uuid.UUID | None = None,
+    unassigned: bool = False,
+    mine: bool = False,
+    help_requested: bool = False,
+    pending_decision: bool = False,
+    overdue: bool = False,
+    tag: str | None = Query(None, max_length=64),
+    ai_verdict: list[AiVerdict] | None = Query(None),
+    no_ai_verdict: bool = False,
+    order: Literal["last_seen", "severity", "number", "due_at"] = "last_seen",
+    limit: int = Query(100, le=500),
+    offset: int = Query(0, ge=0),
+    principal: Principal = Depends(require_permission("finding", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> list[Finding]:
+    q = await findings_query(
+        db, principal,
+        entity_id=entity_id, include_descendants=include_descendants, severity=severity,
+        statuses=finding_status, scanner=scanner, assignee_group_id=assignee_group_id,
+        unassigned=unassigned, mine=mine, help_requested=help_requested,
+        pending_decision=pending_decision, overdue=overdue, tag=tag,
+        ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict, order=order,
+    )
     result = await db.scalars(q.offset(offset).limit(limit))
     return list(result)
 
@@ -300,6 +342,11 @@ async def update_finding_status(
             status.HTTP_403_FORBIDDEN, "Снять решение может только AppSec (право finding:approve)"
         )
 
+    try:
+        analysis = await analysis_of_finding(db, data.ai_analysis_id, finding.id)
+    except AnalysisError as e:
+        raise HTTPException(e.status_code, e.detail)
+
     if finding.status != data.status:
         previous = await set_status(db, finding, data.status)
         record_event(
@@ -307,6 +354,7 @@ async def update_finding_status(
             actor_type=ActorType.user, actor_id=principal.user.id,
             from_status=previous, to_status=data.status,
             reason=(data.reason or "").strip() or None,
+            payload={"ai_analysis_id": str(analysis.id)} if analysis else None,
         )
         await db.commit()
     return await load_finding(db, finding.id)

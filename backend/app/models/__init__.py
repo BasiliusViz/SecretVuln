@@ -1,3 +1,5 @@
+from app.models.ai_analysis import AiAnalysis, AiAnalysisKind, AiReviewStatus, AiVerdict
+from app.models.api_token import ApiToken
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.decision_request import DecisionRequest, DecisionStatus, DecisionType, ReasonTag
@@ -39,4 +41,9 @@ __all__ = [
     "user_group_members",
     "RoleBinding",
     "AuditLog",
+    "AiAnalysis",
+    "AiAnalysisKind",
+    "AiReviewStatus",
+    "AiVerdict",
+    "ApiToken",
 ]

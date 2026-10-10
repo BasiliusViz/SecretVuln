@@ -45,6 +45,9 @@ Vulnerability management платформа: импорт находок без�
 | `api/decisions.py` | Запросы «ложное / риск принят», одобрение и отклонение |
 | `api/auth.py`, `api/groups.py`, `api/roles.py` | Вход и LDAP, группы, роли и каталог прав |
 | `api/bindings.py` | Привязки «группа + роль + проект», делегирование |
+| `api/service_accounts.py`, `services/api_tokens.py` | Сервисные аккаунты (агенты) и API-токены `sv_…` |
+| `api/analyses.py`, `services/ai_analyses.py` | Выводы ИИ (`ai_analyses`), рассмотрение, `findings.ai_verdict` |
+| `mcp_server.py`, `services/agent_tools.py` | MCP для агентов (порт `SV_MCP_PORT`), инструменты поверх тех же запросов |
 | `authz/enforcer.py`, `authz/permissions.py`, `authz/rbac_model.conf` | Casbin: enforcer, каталог прав, модель |
 | `models/` | SQLAlchemy: `entity`, `finding`, `finding_event`, `decision_request`, `import_`, `user`, `user_group`, `role` |
 | `schemas/` | Pydantic по тем же сущностям |
@@ -102,6 +105,7 @@ Vulnerability management платформа: импорт находок без�
 - **Этап 4 «Права на поддерево»** — сделан, прошёл ревью, в `main`: привязки группа+роль+проект (`role_bindings`), заглушки предков в дереве, делегирование `access:manage`, `sla:assign`, вкладка проекта «Доступ». Подробно — `docs/architecture.md`, раздел «Авторизация».
 - **Этап 5а «Журнал аудита»** — сделан, прошёл ревью, в `main`: `audit_log` + `record_audit`, `GET /audit` с правом `audit:read` на поддерево, сторож покрытия мутаций, страница `/audit`, вкладка проекта «Журнал», «Загрузил» в импортах. Подробно — `docs/architecture.md`, раздел «Журнал аудита».
 - **UI-тесты** — сделаны: Playwright, 11 тестов в 8 файлах на изолированном стенде, `scripts/check-all.ps1` / `/sv-check` проверяет всё одной командой. **Дальше**: AI-разбор, этап 6 «Выход для агентов» — спека `docs/superpowers/specs/2026-10-10-stage6-ai-agent-output.md` (там же порядок этапов 6–10 и принятые решения).
+- **Этап 6 «Выход для агентов»** — сессия A (бэкенд) сделана: передача `docs/superpowers/plans/2026-10-10-stage6-handoff-A.md`. Дальше — сессия B (фронтенд), потом ревью.
 - **Отложено, пока не попросят**: Helm/деплой (Dockerfile ещё нет — понадобятся при первом реальном деплое), конструктор дашборд-виджетов — `docs/superpowers/specs/2026-10-05-stage6-dashboard-widgets.md`.
 
 ## Документы

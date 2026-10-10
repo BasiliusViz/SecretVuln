@@ -19,6 +19,7 @@ MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 MARKERS = ("record_audit(", "record_entities_created(")
 
 _FINDINGS = "уязвимости — история в finding_events"
+_AI = "выводы ИИ — сами записи ai_analyses хранят автора, ревьюера и время"
 _DECISIONS = "решения по уязвимостям — история в finding_events"
 
 EXEMPT: dict[tuple[str, str], str] = {
@@ -31,6 +32,8 @@ EXEMPT: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/findings/{finding_id}/decisions"): _DECISIONS,
     ("POST", "/api/v1/decisions/{decision_id}/approve"): _DECISIONS,
     ("POST", "/api/v1/decisions/{decision_id}/reject"): _DECISIONS,
+    ("POST", "/api/v1/findings/{finding_id}/analyses"): _AI,
+    ("POST", "/api/v1/analyses/{analysis_id}/review"): _AI,
 }
 
 

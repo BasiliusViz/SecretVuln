@@ -1,6 +1,6 @@
 """Зависимости аутентификации и доступа.
 
-JWT только удостоверяет пользователя. Права собираются из привязок на каждый
+JWT (люди) или API-токен `sv_…` (сервисные аккаунты) только удостоверяет пользователя. Права собираются из привязок на каждый
 запрос (`load_access`), поэтому правка ролей и привязок действует сразу.
 """
 
@@ -15,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
-from app.models import Entity, User
+from app.models import AuthSource, Entity, User
+from app.services.api_tokens import authenticate as authenticate_token
+from app.services.api_tokens import is_api_token
 from app.services.access import Access, load_access
 
 _bearer = HTTPBearer(auto_error=False)
@@ -43,6 +45,13 @@ async def get_current_principal(
 ) -> Principal:
     if creds is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Не авторизован")
+    if is_api_token(creds.credentials):
+        user = await authenticate_token(db, creds.credentials)
+        if user is None:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "Токен недействителен, отозван или истёк"
+            )
+        return Principal(user=user, access=await load_access(db, user))
     try:
         payload = decode_access_token(creds.credentials)
     except Exception:
@@ -53,7 +62,8 @@ async def get_current_principal(
         user = await db.get(User, uuid.UUID(user_id))
     except (ValueError, TypeError):
         user = None
-    if user is None or not user.is_active:
+    # сервисный аккаунт входит только API-токеном
+    if user is None or not user.is_active or user.auth_source == AuthSource.service:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Пользователь не найден или отключён")
 
     return Principal(user=user, access=await load_access(db, user))

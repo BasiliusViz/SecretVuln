@@ -17,24 +17,32 @@ from __future__ import annotations
 # ресурс → допустимые действия
 CATALOG: dict[str, list[str]] = {
     "entity": ["read", "write", "delete"],
-    "finding": ["read", "write", "delete", "triage", "approve"],
+    "finding": ["read", "write", "delete", "triage", "approve", "analyze"],
     "import": ["read", "import", "delete"],
     "group": ["read", "write", "delete"],
     "role": ["read", "write", "delete"],
     "sla": ["read", "manage", "assign"],
     "access": ["manage"],
     "audit": ["read"],
+    "token": ["manage"],
 }
 
 RESOURCES: list[str] = list(CATALOG.keys())
 ACTIONS: list[str] = [
-    "read", "write", "delete", "import", "triage", "approve", "manage", "assign",
+    "read", "write", "delete", "import", "triage", "approve", "manage", "assign", "analyze",
 ]
 
 GLOBAL_ONLY: frozenset[str] = frozenset(
-    {"group:write", "group:delete", "role:read", "role:write", "role:delete", "sla:manage"}
+    {"group:write", "group:delete", "role:read", "role:write", "role:delete", "sla:manage",
+     "token:manage"}
 )
 ANY_BINDING: frozenset[str] = frozenset({"group:read", "sla:read"})
+
+# Сервисным аккаунтам (агентам) не действуют, даже если выданы привязкой:
+# ИИ не меняет находки и не выпускает токены — решает человек.
+SERVICE_DENIED: frozenset[str] = frozenset(
+    {"finding:write", "finding:delete", "finding:triage", "finding:approve", "token:manage"}
+)
 
 ALL_PERMISSIONS: list[str] = [f"{r}:{a}" for r, actions in CATALOG.items() for a in actions]
 

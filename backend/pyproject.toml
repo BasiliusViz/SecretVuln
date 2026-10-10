@@ -22,6 +22,7 @@ dependencies = [
     "bcrypt>=4.1",
     "pyjwt>=2.8",
     "pyyaml>=6.0",
+    "mcp>=2.3",                      # MCP-сервер для агентов (app/mcp_server.py)
 ]
 
 [project.optional-dependencies]

@@ -116,18 +116,23 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("audit", "read"),
         ],
     ),
+    "ИИ-агент": (
+        "Сервисный аккаунт ИИ: читает уязвимости и пишет выводы, статус не меняет",
+        [("entity", "read"), ("finding", "read"), ("finding", "analyze")],
+    ),
     "Администратор": (
         "Все права, включая управление группами и ролями",
         [
             ("entity", "read"), ("entity", "write"), ("entity", "delete"),
             ("finding", "read"), ("finding", "write"), ("finding", "delete"),
-            ("finding", "triage"), ("finding", "approve"),
+            ("finding", "triage"), ("finding", "approve"), ("finding", "analyze"),
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"), ("group", "write"), ("group", "delete"),
             ("role", "read"), ("role", "write"), ("role", "delete"),
             ("sla", "read"), ("sla", "manage"), ("sla", "assign"),
             ("access", "manage"),
             ("audit", "read"),
+            ("token", "manage"),
         ],
     ),
 }

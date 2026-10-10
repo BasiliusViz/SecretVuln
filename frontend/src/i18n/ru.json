@@ -189,7 +189,8 @@
       "role": "Роли",
       "sla": "Политики SLA",
       "access": "Доступ к проектам",
-      "audit": "Журнал аудита"
+      "audit": "Журнал аудита",
+      "token": "API-токены"
     },
     "action": {
       "read": "Чтение",
@@ -199,7 +200,8 @@
       "triage": "Разбор",
       "approve": "Одобрение",
       "manage": "Управление",
-      "assign": "Назначение"
+      "assign": "Назначение",
+      "analyze": "Выводы ИИ"
     }
   },
   "dashboard": {
@@ -563,6 +565,14 @@
       },
       "import": {
         "create": "Загрузка SARIF"
+      },
+      "service_account": {
+        "create": "Создание сервисного аккаунта",
+        "update": "Изменение сервисного аккаунта"
+      },
+      "token": {
+        "create": "Выдача API-токена",
+        "revoke": "Отзыв API-токена"
       }
     },
     "targetType": {
@@ -572,7 +582,9 @@
       "binding": "Привязка",
       "sla_policy": "Политика SLA",
       "import": "Импорт",
-      "user": "Пользователь"
+      "user": "Пользователь",
+      "service_account": "Сервисный аккаунт",
+      "api_token": "API-токен"
     },
     "fieldName": {
       "name": "Название",
@@ -622,7 +634,13 @@
       "group": "Группа",
       "role": "Роль",
       "entity": "Проект",
-      "permissions": "Права"
+      "permissions": "Права",
+      "email": "Почта",
+      "full_name": "Имя",
+      "is_active": "Активен",
+      "prefix": "Начало токена",
+      "expires_at": "Действует до",
+      "revoked_at": "Отозван"
     },
     "reason": {
       "bad_password": "Неверный пароль",

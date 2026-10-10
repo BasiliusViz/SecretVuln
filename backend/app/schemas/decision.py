@@ -11,6 +11,8 @@ class DecisionCreate(BaseModel):
     reason_tag: ReasonTag | None = None
     reason: str | None = Field(default=None, max_length=2000)
     expires_at: datetime | None = None
+    # запрос «по выводу ИИ»: ссылка попадает в событие истории
+    ai_analysis_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "DecisionCreate":

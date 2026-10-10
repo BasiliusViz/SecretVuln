@@ -56,6 +56,11 @@ SLA_POLICY_DELETE = "sla_policy.delete"
 
 IMPORT_CREATE = "import.create"
 
+SERVICE_ACCOUNT_CREATE = "service_account.create"
+SERVICE_ACCOUNT_UPDATE = "service_account.update"
+TOKEN_CREATE = "token.create"
+TOKEN_REVOKE = "token.revoke"
+
 ACTIONS: tuple[str, ...] = tuple(
     v for k, v in dict(globals()).items() if k.isupper() and isinstance(v, str) and "." in v
 )
@@ -87,6 +92,9 @@ FIELDS: dict[str, tuple[str, ...]] = {
         "is_default",
     ),
     "import": ("filename", "scanner", "branch", "commit_sha", "pipeline_url", "scan_scope"),
+    "service_account": ("email", "full_name", "is_active"),
+    # prefix — несекретное начало токена (`sv_ab12cd34`), сам токен и хеш не пишутся
+    "api_token": ("name", "prefix", "expires_at", "revoked_at"),
 }
 
 # Ссылки, рядом с которыми пишется имя: UUID в журнале ничего не скажет аудитору,
@@ -98,7 +106,9 @@ NAMED_REFS: dict[str, tuple[str, Any]] = {
 }
 
 # Не попадают в журнал, даже если их по ошибке включат в список полей.
-_SECRETS = frozenset({"password", "hashed_password", "token", "access_token", "secret"})
+_SECRETS = frozenset(
+    {"password", "hashed_password", "token", "token_hash", "access_token", "secret"}
+)
 
 
 def _json(value: Any) -> Any:

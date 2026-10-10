@@ -9,6 +9,8 @@ from app.models.base import Base, TimestampMixin, UUIDPKMixin
 class AuthSource(str, enum.Enum):
     local = "local"
     ldap = "ldap"
+    # сервисный аккаунт (агент): без пароля, входит только API-токеном
+    service = "service"
 
 
 class User(Base, UUIDPKMixin, TimestampMixin):

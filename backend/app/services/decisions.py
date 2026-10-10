@@ -12,6 +12,7 @@ from app.models.decision_request import DecisionRequest, DecisionStatus
 from app.models.finding import Finding, FindingStatus
 from app.models.finding_event import ActorType, FindingEventType
 from app.schemas.decision import DecisionCreate
+from app.services.ai_analyses import AnalysisError, analysis_of_finding
 from app.services.events import record_event
 from app.services.finding_state import set_status
 
@@ -48,6 +49,10 @@ async def create_request(
     )
     if pending is not None:
         raise DecisionError(409, "По находке уже есть запрос на рассмотрении")
+    try:
+        analysis = await analysis_of_finding(db, data.ai_analysis_id, finding.id)
+    except AnalysisError as e:
+        raise DecisionError(e.status_code, e.detail)
 
     req = DecisionRequest(
         id=uuid.uuid4(),
@@ -64,7 +69,11 @@ async def create_request(
         db, finding.id, FindingEventType.request_created,
         actor_type=ActorType.user, actor_id=user_id,
         reason=req.reason, reason_tag=_tag(req),
-        payload={"decision_id": str(req.id), "decision_type": req.decision_type.value},
+        payload={
+            "decision_id": str(req.id),
+            "decision_type": req.decision_type.value,
+            **({"ai_analysis_id": str(analysis.id)} if analysis else {}),
+        },
     )
     if can_approve:
         await approve_request(db, req, finding, user_id=user_id, comment=None)

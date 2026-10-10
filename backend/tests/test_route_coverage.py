@@ -56,6 +56,16 @@ ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/decisions/{decision_id}/approve"): "point",
     ("POST", "/api/v1/decisions/{decision_id}/reject"): "point",
     ("POST", "/api/v1/metrics/aggregate"): "list",
+    # выводы ИИ
+    ("GET", "/api/v1/findings/{finding_id}/analyses"): "point",
+    ("POST", "/api/v1/findings/{finding_id}/analyses"): "point",
+    ("POST", "/api/v1/analyses/{analysis_id}/review"): "point",
+    # сервисные аккаунты и токены — глобальный token:manage
+    ("GET", "/api/v1/service-accounts"): "global",
+    ("POST", "/api/v1/service-accounts"): "global",
+    ("PATCH", "/api/v1/service-accounts/{account_id}"): "global",
+    ("POST", "/api/v1/service-accounts/{account_id}/tokens"): "global",
+    ("DELETE", "/api/v1/service-accounts/{account_id}/tokens/{token_id}"): "global",
     ("GET", "/api/v1/audit"): "list",  # с entity_id — ensure audit:read
     # группы и пользователи (состав групп — только глобальный group:write)
     ("GET", "/api/v1/groups"): "global",  # с entity_id — узел должен быть виден

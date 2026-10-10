@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.analyses import router as analyses_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.bindings import router as bindings_router
@@ -16,6 +17,7 @@ from app.api.groups import router as groups_router
 from app.api.imports import router as imports_router
 from app.api.metrics import router as metrics_router
 from app.api.roles import router as roles_router
+from app.api.service_accounts import router as service_accounts_router
 from app.api.sla_policies import router as sla_policies_router
 from app.core.config import get_settings
 from app.db.session import engine, get_db
@@ -53,6 +55,8 @@ app.include_router(roles_router)
 app.include_router(sla_policies_router)
 app.include_router(metrics_router)
 app.include_router(audit_router)
+app.include_router(analyses_router)
+app.include_router(service_accounts_router)
 
 
 @app.get("/api/v1/health", tags=["health"])

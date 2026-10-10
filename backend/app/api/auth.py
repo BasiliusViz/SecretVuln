@@ -84,6 +84,10 @@ async def login(
 
     user = await db.scalar(select(User).where(User.email == email))
 
+    # 0. Сервисный аккаунт по паролю не входит (и не провижёнится через LDAP).
+    if user and user.auth_source == AuthSource.service:
+        raise await _failed(db, email, ip, unauthorized, _BAD_CREDENTIALS, "service_account")
+
     # 1. Локальный пользователь с паролем.
     if user and user.auth_source == AuthSource.local and user.hashed_password:
         if not verify_password(data.password, user.hashed_password):

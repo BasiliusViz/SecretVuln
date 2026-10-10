@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -55,11 +55,14 @@ class FindingRead(BaseModel):
     sla_start_at: datetime | None = None
     due_at: datetime | None = None
     resolved_at: datetime | None = None
+    ai_verdict: str | None = None
 
 
 class FindingStatusUpdate(BaseModel):
     status: FindingStatus
     reason: str | None = Field(default=None, max_length=2000)
+    # смена статуса «по выводу ИИ»: ссылка попадает в событие истории
+    ai_analysis_id: uuid.UUID | None = None
 
 
 class FindingAssign(BaseModel):

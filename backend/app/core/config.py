@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     def database_url_sync(self) -> str:
         return self.database_url.replace("+asyncpg", "+psycopg")
 
+    # MCP-сервер для агентов (отдельный процесс: python -m app.mcp_server)
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = 8002
+
     # Redis / ARQ
     redis_url: str = "redis://localhost:6379/0"
 

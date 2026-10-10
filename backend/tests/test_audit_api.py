@@ -470,7 +470,7 @@ async def test_sla_policies(client, db, admin):
 
 
 async def test_group_and_role_delete_log_cascaded_bindings(client, db, two_teams, admin):
-    from app.models import Role, RoleBinding, UserGroup
+    from app.models import RoleBinding, UserGroup
 
     t = two_teams
     h = admin[1]

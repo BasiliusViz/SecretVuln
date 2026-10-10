@@ -17,8 +17,14 @@ from dataclasses import dataclass, field
 from sqlalchemy import ColumnElement, String, and_, column, false, func, or_, select, table, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.authz.permissions import ALL_PERMISSIONS, ANY_BINDING, GLOBAL_ONLY, is_scoped
-from app.models import Entity, RoleBinding, user_group_members
+from app.authz.permissions import (
+    ALL_PERMISSIONS,
+    ANY_BINDING,
+    GLOBAL_ONLY,
+    SERVICE_DENIED,
+    is_scoped,
+)
+from app.models import AuthSource, Entity, RoleBinding, user_group_members
 from app.models.role import Role
 
 # None в значении — «везде» (на всё дерево)
@@ -199,9 +205,13 @@ async def load_access(db: AsyncSession, user) -> Access:
         .where(user_group_members.c.user_id == user.id)
     )
     rows = (await db.execute(stmt)).all()
+    service = user.auth_source == AuthSource.service
     return Access.build(
-        [(path, res, act) for path, res, act, _ in rows if res is not None],
+        [
+            (path, res, act) for path, res, act, _ in rows
+            if res is not None and not (service and f"{res}:{act}" in SERVICE_DENIED)
+        ],
         user_id=user.id,
-        is_superuser=user.is_superuser,
+        is_superuser=user.is_superuser and not service,
         role_names={name for *_, name in rows},
     )

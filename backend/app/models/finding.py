@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.models.ai_analysis import AiVerdict
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
 
 
@@ -145,6 +146,11 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
     sla_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Последний неотклонённый вердикт ИИ (копия из ai_analyses — для списка и фильтра)
+    ai_verdict: Mapped[AiVerdict | None] = mapped_column(
+        Enum(AiVerdict, name="ai_verdict"), index=True
+    )
 
     entity = relationship("Entity", back_populates="findings")
     import_ = relationship("Import", back_populates="findings")
