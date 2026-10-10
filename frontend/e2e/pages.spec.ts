@@ -15,6 +15,7 @@ const STATIC_ROUTES = [
   "/roles",
   "/sla",
   "/audit",
+  "/service-accounts",
 ];
 
 const KEYS = allKeys();

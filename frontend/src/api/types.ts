@@ -54,6 +54,51 @@ export interface Finding {
   resolved_at: string | null;
   assignee_group: GroupBrief | null;
   assignee_user: { id: string; email: string; full_name: string | null } | null;
+  ai_verdict: AiVerdict | null;
+}
+
+export const AI_VERDICTS = ["true_positive", "false_positive", "uncertain"] as const;
+export type AiVerdict = (typeof AI_VERDICTS)[number];
+
+export interface AiAnalysis {
+  id: string;
+  finding_id: string;
+  kind: "summary" | "triage";
+  verdict: AiVerdict | null;
+  confidence: number | null;
+  title_plain: string | null;
+  explanation: string | null;
+  remediation: string | null;
+  agent: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  created_by: string | null;
+  author: { id: string; email: string; full_name: string | null } | null;
+  created_at: string;
+  review_status: "pending" | "accepted" | "rejected";
+  reviewed_by: string | null;
+  reviewer: { id: string; email: string; full_name: string | null } | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface ServiceAccount {
+  id: string;
+  email: string;
+  full_name: string | null;
+  is_active: boolean;
+  created_at: string;
+  tokens: ApiToken[];
 }
 
 export interface FindingDetail extends Finding {

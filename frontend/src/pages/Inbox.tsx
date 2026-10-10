@@ -9,6 +9,7 @@ import {
   DecisionDialog,
   type DecisionBody,
 } from "../components/DecisionDialog";
+import { AiVerdictBadge, AiVerdictFilter, applyAiVerdictFilter } from "../components/AiVerdictBadge";
 import { DueBadge } from "../components/DueBadge";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { Tabs } from "../components/Tabs";
@@ -48,17 +49,23 @@ export function Inbox() {
   const [team, setTeam] = useState("");
   const [fpOpen, setFpOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [aiFilter, setAiFilter] = useState("");
   const teamRef = useRef<HTMLSelectElement>(null);
+  const requestId = useRef(0);
 
   const load = useCallback(async () => {
     if (tab === "noisy") return;
-    const res = await apiJson<Finding[]>(
-      `/api/v1/findings?${QUERIES[tab]}&limit=200`,
-    );
+    const params = new URLSearchParams(QUERIES[tab]);
+    params.set("limit", "200");
+    applyAiVerdictFilter(params, aiFilter);
+    // Вкладка и фильтр меняются быстрее, чем приходят ответы — устаревший ответ отбрасываем
+    const id = ++requestId.current;
+    const res = await apiJson<Finding[]>(`/api/v1/findings?${params}`);
+    if (id !== requestId.current) return;
     setItems(res.data ?? []);
     setCursor(0);
     setSelected(new Set());
-  }, [tab]);
+  }, [tab, aiFilter]);
 
   useEffect(() => {
     void load();
@@ -227,6 +234,7 @@ export function Inbox() {
             <button onClick={assign} disabled={!team || !canTriageTargets}>
               {t("inbox.assign")}
             </button>
+            <AiVerdictFilter value={aiFilter} onChange={setAiFilter} />
             {message && (
               <span
                 role="status"
@@ -305,6 +313,9 @@ export function Inbox() {
                       </td>
                       <td style={{ ...CELL, fontSize: 12 }}>
                         <DueBadge dueAt={f.due_at} status={f.status} />
+                      </td>
+                      <td style={CELL}>
+                        <AiVerdictBadge verdict={f.ai_verdict} />
                       </td>
                     </tr>
                   ))}

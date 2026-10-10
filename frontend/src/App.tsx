@@ -15,6 +15,7 @@ import { Login } from "./pages/Login";
 import { MyVulns } from "./pages/MyVulns";
 import { ProjectSettings } from "./pages/ProjectSettings";
 import { Roles } from "./pages/Roles";
+import { ServiceAccounts } from "./pages/ServiceAccounts";
 import { SlaPolicies } from "./pages/SlaPolicies";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -59,6 +60,7 @@ export function App() {
               <Route path="roles" element={<Roles />} />
               <Route path="sla" element={<SlaPolicies />} />
               <Route path="audit" element={<Audit />} />
+              <Route path="service-accounts" element={<ServiceAccounts />} />
               {/* старые адреса — чтобы не ломались сохранённые ссылки */}
               <Route path="assets" element={<Navigate to="/projects" replace />} />
               <Route path="findings" element={<Navigate to="/vulnerabilities" replace />} />

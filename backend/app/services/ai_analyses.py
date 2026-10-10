@@ -32,10 +32,18 @@ async def refresh_ai_verdict(db: AsyncSession, finding_id: uuid.UUID) -> None:
         .limit(1)
     )
     # через ORM, а не UPDATE: объект находки в сессии остаётся загруженным.
-    # Блокировка строки: параллельные выводы пересчитывают вердикт по очереди.
-    finding = await db.get(Finding, finding_id, with_for_update=True)
+    finding = await _lock_finding(db, finding_id)
     finding.ai_verdict = await db.scalar(latest)
     await db.flush()
+
+
+async def _lock_finding(db: AsyncSession, finding_id: uuid.UUID) -> Finding:
+    """Блокировка находки: параллельные выводы пересчитывают вердикт по очереди.
+
+    FOR NO KEY UPDATE, а не FOR UPDATE: вставка в `ai_analyses` берёт по внешнему ключу
+    KEY SHARE на находку, и FOR UPDATE с ним взаимно блокировался бы у двух агентов.
+    """
+    return await db.get(Finding, finding_id, with_for_update={"key_share": True})
 
 
 async def list_analyses(db: AsyncSession, finding_id: uuid.UUID) -> list[AiAnalysis]:
@@ -50,6 +58,8 @@ async def list_analyses(db: AsyncSession, finding_id: uuid.UUID) -> list[AiAnaly
 async def create_analysis(
     db: AsyncSession, finding: Finding, data: AiAnalysisCreate, author: User
 ) -> AiAnalysis:
+    # блокируем до вставки: вторая транзакция ждёт здесь, а не после своего INSERT
+    await _lock_finding(db, finding.id)
     analysis = AiAnalysis(
         finding_id=finding.id,
         created_by=author.id,
@@ -81,10 +91,12 @@ async def review_analysis(
 async def analysis_of_finding(
     db: AsyncSession, analysis_id: uuid.UUID | None, finding_id: uuid.UUID
 ) -> AiAnalysis | None:
-    """Ссылка `ai_analysis_id` при смене статуса: вывод должен относиться к этой находке."""
+    """Ссылка `ai_analysis_id` при смене статуса: принятый вывод этой же находки."""
     if analysis_id is None:
         return None
     analysis = await db.get(AiAnalysis, analysis_id)
     if analysis is None or analysis.finding_id != finding_id:
         raise AnalysisError(400, "Вывод ИИ не найден у этой уязвимости")
+    if analysis.review_status != AiReviewStatus.accepted:
+        raise AnalysisError(400, "Сослаться можно только на принятый вывод ИИ")
     return analysis

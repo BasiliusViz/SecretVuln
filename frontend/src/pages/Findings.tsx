@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { apiJson } from "../api/json";
 import type { EntityNode, Finding, Group } from "../api/types";
 import { useCan } from "../auth/AuthContext";
+import { AiVerdictBadge, AiVerdictFilter, applyAiVerdictFilter } from "../components/AiVerdictBadge";
 import { DueBadge } from "../components/DueBadge";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { MONO } from "../components/ui";
@@ -29,6 +30,7 @@ export function Findings() {
   const [teamFilter, setTeamFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [aiFilter, setAiFilter] = useState("");
   const [order, setOrder] = useState<(typeof ORDERS)[number]>("last_seen");
   const [tags, setTags] = useState<string[]>([]);
   const requestId = useRef(0);
@@ -45,6 +47,7 @@ export function Findings() {
     else if (teamFilter) params.set("assignee_group_id", teamFilter);
     if (tagFilter) params.set("tag", tagFilter);
     if (overdueOnly) params.set("overdue", "true");
+    applyAiVerdictFilter(params, aiFilter);
     params.set("order", order);
     params.set("limit", "200");
     // Фильтры меняются быстрее, чем приходят ответы — игнорируем устаревший ответ,
@@ -53,7 +56,7 @@ export function Findings() {
     void apiJson<Finding[]>(`/api/v1/findings?${params}`).then((r) => {
       if (id === requestId.current) setFindings(r.data ?? []);
     });
-  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter, tagFilter, overdueOnly, order]);
+  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter, tagFilter, overdueOnly, aiFilter, order]);
 
   useEffect(load, [load]);
 
@@ -168,6 +171,7 @@ export function Findings() {
           <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
           {t("vulns.overdueOnly")}
         </label>
+        <AiVerdictFilter value={aiFilter} onChange={setAiFilter} style={{ ...inputStyle, minWidth: 160 }} />
         <select
           style={{ ...inputStyle, minWidth: 160 }}
           value={order}
@@ -202,6 +206,7 @@ export function Findings() {
                 <th style={HEAD}>{t("vulns.file")}</th>
                 <th style={HEAD}>{t("status.label")}</th>
                 <th style={HEAD}>{t("due.label")}</th>
+                <th style={HEAD}>{t("ai.verdict.label")}</th>
                 <th style={HEAD}>{t("vulns.lastSeen")}</th>
               </tr>
             </thead>
@@ -237,6 +242,9 @@ export function Findings() {
                   <td style={{ ...CELL, fontSize: 12 }}>{t(`status.${f.status}`)}</td>
                   <td style={{ ...CELL, fontSize: 12 }}>
                     <DueBadge dueAt={f.due_at} status={f.status} />
+                  </td>
+                  <td style={CELL}>
+                    <AiVerdictBadge verdict={f.ai_verdict} />
                   </td>
                   <td style={{ ...CELL, color: "var(--text-muted)", fontSize: 12 }}>
                     {new Date(f.last_seen).toLocaleString("ru-RU")}

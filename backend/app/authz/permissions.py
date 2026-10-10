@@ -41,11 +41,10 @@ ANY_BINDING: frozenset[str] = frozenset({"group:read", "sla:read"})
 ALL_PERMISSIONS: list[str] = [f"{r}:{a}" for r, actions in CATALOG.items() for a in actions]
 
 # Сервисным аккаунтам (агентам) действуют только эти права, что бы ни выдали привязки:
-# чтение и запись выводов ИИ. Менять находки, проекты, импорты, доступ и токены
-# агент не может — решает человек, а утёкший токен не даёт больше, чем чтение.
-SERVICE_ALLOWED: frozenset[str] = frozenset(
-    {p for p in ALL_PERMISSIONS if p.endswith(":read")} | {"finding:analyze"}
-)
+# чтение проектов и находок и запись выводов ИИ — как у роли «ИИ-агент». Менять
+# находки, проекты, импорты, доступ и токены агент не может, а журнал аудита, группы
+# и роли не видит: утёкший токен не даёт больше, чем нужно для разбора.
+SERVICE_ALLOWED: frozenset[str] = frozenset({"entity:read", "finding:read", "finding:analyze"})
 
 
 def is_valid(resource: str, action: str) -> bool:

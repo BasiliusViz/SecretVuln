@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 
 import { apiJson } from "../api/json";
-import { OPEN_STATUSES, type Decision, type FindingDetail, type FindingEvent, type Group } from "../api/types";
+import { OPEN_STATUSES, type AiAnalysis, type Decision, type FindingDetail, type FindingEvent, type Group } from "../api/types";
 import { useCan } from "../auth/AuthContext";
+import { AiAnalyses } from "../components/AiAnalyses";
 import { DecisionDialog, type DecisionBody } from "../components/DecisionDialog";
 import { DueBadge } from "../components/DueBadge";
 import { Modal } from "../components/Modal";
@@ -22,6 +23,11 @@ export function FindingWindow() {
   const [finding, setFinding] = useState<FindingDetail | null>(null);
   const [events, setEvents] = useState<FindingEvent[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [analyses, setAnalyses] = useState<AiAnalysis[]>([]);
+  // Принятый вывод ИИ: действие из блока «Действие по выводу ИИ» уйдёт с его ai_analysis_id.
+  // Обычная панель действий ссылку не ставит и сбрасывает предложение.
+  const [aiBasis, setAiBasis] = useState<AiAnalysis | null>(null);
+  const [dialogFromAi, setDialogFromAi] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -44,12 +50,14 @@ export function FindingWindow() {
     }
     const found = res.data;
     setFinding(found);
-    const [ev, dec] = await Promise.all([
+    const [ev, dec, ai] = await Promise.all([
       apiJson<FindingEvent[]>(`/api/v1/findings/${found.id}/events`),
       apiJson<Decision[]>(`/api/v1/findings/${found.id}/decisions`),
+      apiJson<AiAnalysis[]>(`/api/v1/findings/${found.id}/analyses`),
     ]);
     setEvents(ev.data ?? []);
     setDecisions(dec.data ?? []);
+    setAnalyses(ai.data ?? []);
   }, [number, t]);
 
   useEffect(() => {
@@ -59,6 +67,8 @@ export function FindingWindow() {
     setLoadError(null);
     setEvents([]);
     setDecisions([]);
+    setAnalyses([]);
+    setAiBasis(null);
     setMessage(null);
   }, [number]);
 
@@ -91,12 +101,40 @@ export function FindingWindow() {
     if (!res.ok) setMessage(res.error ?? t("common.error"));
     await load();
   };
-  const setStatus = (status: string) => void act(apiJson(base, "PATCH", { status }));
+  const basis = (fromAi: boolean) => (fromAi && aiBasis ? { ai_analysis_id: aiBasis.id } : {});
+  const setStatus = async (status: string, fromAi = false) => {
+    setMessage(null);
+    const res = await apiJson(base, "PATCH", { status, ...basis(fromAi) });
+    if (res.ok) setAiBasis(null);
+    else setMessage(res.error ?? t("common.error"));
+    await load();
+  };
+  const openDecision = (mode: "false_positive" | "risk_accepted", fromAi = false) => {
+    setDialogFromAi(fromAi);
+    setDialog(mode);
+  };
   const submitDecision = async (body: DecisionBody) => {
-    const res = await apiJson(`${base}/decisions`, "POST", body);
+    const res = await apiJson(`${base}/decisions`, "POST", { ...body, ...basis(dialogFromAi) });
     if (!res.ok) return res.error ?? t("common.error");
+    setAiBasis(null);
     await load();
     return null;
+  };
+  const reviewAnalysis = async (analysis: AiAnalysis, accept: boolean) => {
+    let comment: string | null = null;
+    if (!accept) {
+      const reason = window.prompt(t("ai.rejectComment"));
+      if (reason === null) return;
+      comment = reason.trim() || null;
+    }
+    setMessage(null);
+    const res = await apiJson(`/api/v1/analyses/${analysis.id}/review`, "POST", {
+      decision: accept ? "accept" : "reject",
+      comment,
+    });
+    if (!res.ok) setMessage(res.error ?? t("common.error"));
+    else if (accept && analysis.kind === "triage" && isOpen && canTriage) setAiBasis(analysis);
+    await load();
   };
   const submitHelp = async () => {
     setDialog(null);
@@ -215,19 +253,44 @@ export function FindingWindow() {
         </section>
       )}
 
+      <AiAnalyses analyses={analyses} canReview={canTriage} onReview={(a, accept) => void reviewAnalysis(a, accept)} />
+
+      {aiBasis && canTriage && isOpen && (
+        <section className="card" role="region" aria-label={t("ai.nextTitle")} style={SECTION}>
+          <div className="section-label">{t("ai.nextTitle")}</div>
+          <p style={{ margin: "0 0 8px", fontSize: 13 }}>{t("ai.nextHint")}</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {aiBasis.verdict === "false_positive" && !pending && (
+              <button style={PRIMARY_BUTTON} onClick={() => openDecision("false_positive", true)}>
+                {t("window.falsePositive")}
+              </button>
+            )}
+            {aiBasis.verdict === "true_positive" && canApprove && ["new", "triaged"].includes(finding.status) && (
+              <button style={PRIMARY_BUTTON} onClick={() => void setStatus("confirmed", true)}>
+                {t("window.confirm")}
+              </button>
+            )}
+            {aiBasis.verdict === "true_positive" && finding.status !== "in_progress" && (
+              <button onClick={() => void setStatus("in_progress", true)}>{t("window.take")}</button>
+            )}
+            <button onClick={() => setAiBasis(null)}>{t("ai.nextSkip")}</button>
+          </div>
+        </section>
+      )}
+
       {canTriage && isOpen && (
         <section style={{ ...SECTION, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {finding.status !== "in_progress" && (
-            <button style={PRIMARY_BUTTON} onClick={() => setStatus("in_progress")}>
+            <button style={PRIMARY_BUTTON} onClick={() => void setStatus("in_progress")}>
               {t("window.take")}
             </button>
           )}
           {canApprove && ["new", "triaged"].includes(finding.status) && (
-            <button onClick={() => setStatus("confirmed")}>{t("window.confirm")}</button>
+            <button onClick={() => void setStatus("confirmed")}>{t("window.confirm")}</button>
           )}
-          {!pending && <button onClick={() => setDialog("false_positive")}>{t("window.falsePositive")}</button>}
+          {!pending && <button onClick={() => openDecision("false_positive")}>{t("window.falsePositive")}</button>}
           {canApprove && !pending && (
-            <button onClick={() => setDialog("risk_accepted")}>{t("window.acceptRisk")}</button>
+            <button onClick={() => openDecision("risk_accepted")}>{t("window.acceptRisk")}</button>
           )}
           {finding.help_requested_at ? (
             <span style={{ fontSize: 12, ...MUTED }}>
@@ -265,6 +328,7 @@ export function FindingWindow() {
                 {t(`window.events.${ev.event_type}`)}
                 {ev.from_status && ev.to_status && ` · ${t(`status.${ev.from_status}`)} → ${t(`status.${ev.to_status}`)}`}
                 {!ev.from_status && ev.to_status && ` · ${t(`status.${ev.to_status}`)}`}
+                {ev.payload?.ai_analysis_id ? ` · ${t("ai.byAnalysis")}` : null}
               </div>
               {ev.reason && <div style={{ whiteSpace: "pre-wrap" }}>{ev.reason}</div>}
             </li>

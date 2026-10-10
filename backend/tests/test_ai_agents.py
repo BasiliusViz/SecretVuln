@@ -183,6 +183,9 @@ async def test_agent_with_admin_role_gets_only_read_and_analyze(
     assert (await client.delete(f"/api/v1/entities/{two_teams.a.id}", headers=h)).status_code == 403
     r = await client.post("/api/v1/service-accounts", json={"name": "x2"}, headers=h)
     assert r.status_code == 403
+    # журнал аудита, группы и роли агенту не видны, даже с ролью администратора
+    assert (await client.get("/api/v1/audit", headers=h)).status_code == 403
+    assert (await client.get("/api/v1/roles", headers=h)).status_code == 403
 
 
 async def test_review_accept_reject_and_link_in_status_event(
@@ -217,6 +220,12 @@ async def test_review_accept_reject_and_link_in_status_event(
     finding = (await client.get(f"/api/v1/findings/{fa.id}", headers=dev_h)).json()
     assert finding["ai_verdict"] == "true_positive"  # отклонённый вывод не считается
     assert finding["status"] == "new"
+    # сослаться можно только на принятый вывод: отклонённый и ещё не рассмотренный — 400
+    for analysis_id in (second["id"], first["id"]):
+        r = await client.patch(f"/api/v1/findings/{fa.id}",
+                               json={"status": "confirmed", "ai_analysis_id": analysis_id},
+                               headers=dev_h)
+        assert r.status_code == 400, r.text
 
     r = await client.post(f"/api/v1/analyses/{first['id']}/review",
                           json={"decision": "accept"}, headers=dev_h)
