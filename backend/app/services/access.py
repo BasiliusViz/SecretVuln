@@ -21,7 +21,7 @@ from app.authz.permissions import (
     ALL_PERMISSIONS,
     ANY_BINDING,
     GLOBAL_ONLY,
-    SERVICE_DENIED,
+    SERVICE_ALLOWED,
     is_scoped,
 )
 from app.models import AuthSource, Entity, RoleBinding, user_group_members
@@ -209,7 +209,7 @@ async def load_access(db: AsyncSession, user) -> Access:
     return Access.build(
         [
             (path, res, act) for path, res, act, _ in rows
-            if res is not None and not (service and f"{res}:{act}" in SERVICE_DENIED)
+            if res is not None and (not service or f"{res}:{act}" in SERVICE_ALLOWED)
         ],
         user_id=user.id,
         is_superuser=user.is_superuser and not service,

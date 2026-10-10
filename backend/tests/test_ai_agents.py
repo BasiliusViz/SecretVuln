@@ -171,6 +171,20 @@ async def test_agent_never_changes_status_even_with_strong_role(
     assert r.status_code == 403
 
 
+async def test_agent_with_admin_role_gets_only_read_and_analyze(
+    client, db, admin, grant, two_teams
+):
+    from app.authz.permissions import SERVICE_ALLOWED
+
+    _, admin_h = admin
+    user, h, _ = await _agent(client, admin_h, grant, db, role="Администратор")
+    access = await load_access(db, user)
+    assert set(access.grants) <= SERVICE_ALLOWED and "finding:analyze" in access.grants
+    assert (await client.delete(f"/api/v1/entities/{two_teams.a.id}", headers=h)).status_code == 403
+    r = await client.post("/api/v1/service-accounts", json={"name": "x2"}, headers=h)
+    assert r.status_code == 403
+
+
 async def test_review_accept_reject_and_link_in_status_event(
     client, db, admin, grant, two_teams
 ):

@@ -5,7 +5,7 @@
 ## Что сделано
 
 - **Права**: `finding:analyze`, `token:manage` (глобальное). Роль «ИИ-агент» (`entity:read`, `finding:read`, `finding:analyze`) в `cli.py`; Администратору добавлены `finding:analyze`, `token:manage`. После деплоя — `python -m app.cli seed-roles`.
-- **Сервисные аккаунты**: `AuthSource.service`, email `<name>@service.local`, без пароля. Вход по паролю и JWT для них — 401. `SERVICE_DENIED` (`authz/permissions.py`) срезает `finding:write/delete/triage/approve` и `token:manage`, даже если выданы привязкой; суперпользователем сервисный аккаунт не бывает.
+- **Сервисные аккаунты**: `AuthSource.service`, email `<name>@service.local`, без пароля. Вход по паролю и JWT для них — 401. `SERVICE_ALLOWED` (`authz/permissions.py`) — белый список: сервисному аккаунту действуют только `*:read` и `finding:analyze`, что бы ни выдали привязки; суперпользователем сервисный аккаунт не бывает.
 - **Токены** `sv_…` (`services/api_tokens.py`): sha256 в БД, показ один раз, `last_used_at` — не чаще раза в минуту. Отзыв — мягкий (`revoked_at`).
 - **Миграция 0016**: `api_tokens`, `ai_analyses`, `findings.ai_verdict` (последний неотклонённый triage-вердикт, пересчёт при записи и рассмотрении).
 - **Аудит**: `service_account.create/update`, `token.create/revoke` (строки в `ru.json` уже есть). Выводы ИИ — в EXEMPT: запись сама хранит автора и ревьюера.

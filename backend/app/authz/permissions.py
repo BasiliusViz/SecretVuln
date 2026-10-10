@@ -38,13 +38,14 @@ GLOBAL_ONLY: frozenset[str] = frozenset(
 )
 ANY_BINDING: frozenset[str] = frozenset({"group:read", "sla:read"})
 
-# Сервисным аккаунтам (агентам) не действуют, даже если выданы привязкой:
-# ИИ не меняет находки и не выпускает токены — решает человек.
-SERVICE_DENIED: frozenset[str] = frozenset(
-    {"finding:write", "finding:delete", "finding:triage", "finding:approve", "token:manage"}
-)
-
 ALL_PERMISSIONS: list[str] = [f"{r}:{a}" for r, actions in CATALOG.items() for a in actions]
+
+# Сервисным аккаунтам (агентам) действуют только эти права, что бы ни выдали привязки:
+# чтение и запись выводов ИИ. Менять находки, проекты, импорты, доступ и токены
+# агент не может — решает человек, а утёкший токен не даёт больше, чем чтение.
+SERVICE_ALLOWED: frozenset[str] = frozenset(
+    {p for p in ALL_PERMISSIONS if p.endswith(":read")} | {"finding:analyze"}
+)
 
 
 def is_valid(resource: str, action: str) -> bool:
