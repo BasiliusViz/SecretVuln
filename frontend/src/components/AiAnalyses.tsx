@@ -41,9 +41,10 @@ export function AiAnalyses({
             style={{
               borderLeft: "2px solid var(--border)",
               paddingLeft: 10,
-              opacity: a.review_status === "rejected" ? 0.6 : 1,
             }}
           >
+            {/* отклонённый вывод приглушён, но строка «Отклонил … — причина» остаётся читаемой */}
+            <div style={{ opacity: a.review_status === "rejected" ? 0.6 : 1 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
               {a.kind === "triage" ? (
                 <AiVerdictBadge verdict={a.verdict} />
@@ -74,8 +75,9 @@ export function AiAnalyses({
               {a.model && ` · ${t("ai.model")}: ${a.model}`}
               {a.prompt_version && ` · ${t("ai.prompt")}: ${a.prompt_version}`}
             </div>
+            </div>
             {a.review_status !== "pending" && a.reviewed_at && (
-              <div style={{ fontSize: 12, ...MUTED, marginTop: 2 }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
                 {t(a.review_status === "accepted" ? "ai.acceptedBy" : "ai.rejectedBy", {
                   name: who(a.reviewer) ?? t("window.system"),
                   date: formatDateTime(a.reviewed_at),

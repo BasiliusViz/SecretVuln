@@ -143,7 +143,7 @@ async def submit_analysis(
 
 
 class RequireApiToken:
-    """Без заголовка с токеном `sv_…` — 401 до MCP (сам токен проверяют инструменты)."""
+    """Без действующего токена `sv_…` — 401 до MCP (инструменты перепроверяют его сами)."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -152,9 +152,15 @@ class RequireApiToken:
         if scope["type"] == "http":
             headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
             raw = _bearer(headers)
+            detail = None
             if not raw or not api_tokens.is_api_token(raw):
-                response = JSONResponse({"detail": "Нужен API-токен sv_…"}, status_code=401)
-                await response(scope, receive, send)
+                detail = "Нужен API-токен sv_…"
+            else:
+                async with async_session_factory() as db:
+                    if await api_tokens.authenticate(db, raw) is None:
+                        detail = "Токен недействителен, отозван или истёк"
+            if detail:
+                await JSONResponse({"detail": detail}, status_code=401)(scope, receive, send)
                 return
         await self.app(scope, receive, send)
 

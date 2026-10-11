@@ -122,10 +122,10 @@ async def _resolve_finding_id(db: AsyncSession, ref: str) -> uuid.UUID:
     digits = ref.upper().removeprefix("SV-")
     # isdecimal, а не isdigit: «²» — digit, но int() его не разберёт; потолок — int4 в БД
     if not digits.isdecimal() or len(digits) > 10 or int(digits) > 2_147_483_647:
-        raise not_found("Уязвимость")
+        raise not_found("Уязвимость", feminine=True)
     found = await db.scalar(select(Finding.id).where(Finding.number == int(digits)))
     if found is None:
-        raise not_found("Уязвимость")
+        raise not_found("Уязвимость", feminine=True)
     return found
 
 

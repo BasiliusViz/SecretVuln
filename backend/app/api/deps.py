@@ -101,8 +101,8 @@ def require_global(resource: str, action: str):
     return _dep
 
 
-def not_found(what: str = "Объект") -> HTTPException:
-    return HTTPException(status.HTTP_404_NOT_FOUND, f"{what} не найден")
+def not_found(what: str = "Объект", *, feminine: bool = False) -> HTTPException:
+    return HTTPException(status.HTTP_404_NOT_FOUND, f"{what} не найден{'а' if feminine else ''}")
 
 
 def ensure(

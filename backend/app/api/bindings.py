@@ -212,7 +212,7 @@ async def delete_binding(
 ) -> None:
     binding = await db.get(RoleBinding, binding_id)
     if binding is None:
-        raise not_found("Привязка")
+        raise not_found("Привязка", feminine=True)
     if binding.entity_id is None:
         if not is_access_admin(principal.access):
             raise HTTPException(
@@ -220,7 +220,7 @@ async def delete_binding(
             )
     else:
         if not principal.access.can_see(binding.entity):
-            raise not_found("Привязка")
+            raise not_found("Привязка", feminine=True)
         await _check_grant(db, principal, binding.role, binding.entity)
     _record(
         db, principal, request, audit.BINDING_DELETE,
@@ -301,7 +301,7 @@ async def delete_group_binding(
 ) -> None:
     binding = await db.get(RoleBinding, binding_id)
     if binding is None or binding.group_id != group_id:
-        raise not_found("Привязка")
+        raise not_found("Привязка", feminine=True)
     _record(
         db, principal, request, audit.BINDING_DELETE,
         binding, binding.group, binding.role, binding.entity,

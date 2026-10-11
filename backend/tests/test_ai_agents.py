@@ -331,7 +331,7 @@ async def test_mcp_http_requires_token_and_calls_tool(
     )
     _, admin_h = admin
     await make_finding(db, two_teams.a_svc, "fa", number=3)
-    _, h, _ = await _agent(client, admin_h, grant, db, entity=two_teams.a)
+    user, h, token_id = await _agent(client, admin_h, grant, db, entity=two_teams.a)
 
     starlette_app = mcp_server.server.streamable_http_app(
         stateless_http=True, json_response=True
@@ -359,6 +359,60 @@ async def test_mcp_http_requires_token_and_calls_tool(
             assert [f["number"] for f in payload["findings"]] == ["SV-3"]
 
             bad = {**headers, "Authorization": "Bearer sv_revoked"}
-            r = await c.post("/mcp", json=call, headers=bad)
-            assert r.json()["result"]["isError"] is True
+            assert (await c.post("/mcp", json=call, headers=bad)).status_code == 401
+            # отозванный токен — 401 уже на HTTP, до списка инструментов
+            r = await client.delete(
+                f"/api/v1/service-accounts/{user.id}/tokens/{token_id}", headers=admin_h
+            )
+            assert r.status_code == 200, r.text
+            listing = {"jsonrpc": "2.0", "id": 3, "method": "tools/list"}
+            assert (await c.post("/mcp", json=listing, headers=headers)).status_code == 401
     await engine.dispose()
+
+
+async def test_parallel_analyses_on_one_finding_do_not_deadlock(db, admin, two_teams):
+    """Два агента пишут вывод по одной находке в разных транзакциях одновременно."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models import AiAnalysis, Finding
+    from app.services.ai_analyses import create_analysis
+    from tests.conftest import _engine
+
+    admin_user, _ = admin
+    f = await make_finding(db, two_teams.a_svc, "fp", number=11)
+    engine = _engine()
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def write(verdict: str, hold: float) -> None:
+        async with factory() as s:
+            finding = await s.get(Finding, f.id)
+            author = await s.get(User, admin_user.id)
+            await create_analysis(s, finding, AiAnalysisCreate(kind="triage", verdict=verdict), author)
+            await asyncio.sleep(hold)  # держим блокировку, пока вторая транзакция ждёт
+            await s.commit()
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(write("true_positive", 0.3), write("false_positive", 0.0)), timeout=10
+        )
+    finally:
+        await engine.dispose()
+
+    rows = list(await db.scalars(select(AiAnalysis).where(AiAnalysis.finding_id == f.id)))
+    assert len(rows) == 2
+    await db.refresh(f)
+    latest = max(rows, key=lambda a: (a.created_at, a.id))
+    assert f.ai_verdict == latest.verdict
+
+
+@pytest.mark.parametrize("ref", ["SV-99999999999", "SV-2147483648", "SV-²", "SV-", "SV-1x", " sv-٣ "])
+async def test_mcp_get_finding_odd_numbers_are_not_found(client, db, admin, grant, two_teams, ref):
+    _, admin_h = admin
+    await make_finding(db, two_teams.a_svc, "fa", number=1)
+    user, _, _ = await _agent(client, admin_h, grant, db, entity=two_teams.a)
+    p = await _principal(db, user)
+    with pytest.raises(HTTPException) as e:
+        await agent_tools.get_finding(db, p, ref)
+    assert e.value.status_code == 404

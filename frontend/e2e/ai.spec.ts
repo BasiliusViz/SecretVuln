@@ -79,3 +79,66 @@ test("агент ИИ: токен в админке → вывод через AP
   expect(after.status).toBe("false_positive");
   await api.dispose();
 });
+
+test("вывод ИИ: «Отклонить» с комментарием; обычная панель после «Принять» без пометки «по выводу ИИ»", async ({
+  page,
+}) => {
+  const api = await Api.as();
+  const { project, findings } = await api.projectWithFindings("ai-rej");
+  const [finding] = findings;
+  const ref = `SV-${finding.number}`;
+
+  // Агент — через API: аккаунт, токен, группа с ролью «ИИ-агент» на проект
+  const account = await api.post<{ id: string }>("/api/v1/service-accounts", { name: uniq("agent") });
+  const { token } = await api.post<{ token: string }>(`/api/v1/service-accounts/${account.id}/tokens`, {
+    name: "e2e",
+  });
+  const group = await api.createGroup(uniq("agents"));
+  await api.addMember(group.id, account.id);
+  await api.bind(group.id, await api.roleId("ИИ-агент"), project.id);
+  const agent = await Api.as(token);
+  const analyse = (title: string) =>
+    agent.post(`/api/v1/findings/${finding.id}/analyses`, {
+      kind: "triage",
+      verdict: "true_positive",
+      confidence: 0.7,
+      title_plain: title,
+      agent: "e2e-agent",
+    });
+
+  // «Отклонить»: комментарий из prompt, вердикт пересчитан (других выводов нет)
+  await analyse("Первый вывод — неверный");
+  await page.goto(`/f/${ref}`);
+  const block = page.getByRole("region", { name: t("ai.title") });
+  await expect(block.getByText("Первый вывод — неверный")).toBeVisible();
+  page.once("dialog", (d) => {
+    expect(d.message()).toBe(t("ai.rejectComment"));
+    void d.accept("Санитайзер есть выше по стеку");
+  });
+  await block.getByRole("button", { name: t("ai.reject") }).click();
+  await expect(block.getByText(t("ai.review.rejected"))).toBeVisible();
+  await expect(block.getByText("Санитайзер есть выше по стеку", { exact: false })).toBeVisible();
+  await expect(page.getByRole("region", { name: t("ai.nextTitle") })).toHaveCount(0);
+  expect((await api.get<{ ai_verdict: string | null }>(`/api/v1/findings/${finding.id}`)).ai_verdict).toBeNull();
+
+  // «Принять» второй вывод, но действие — из обычной панели: пометки быть не должно
+  await analyse("Второй вывод — верный");
+  await page.reload();
+  await block.locator("li").filter({ hasText: "Второй вывод — верный" }).getByRole("button", { name: t("ai.accept") }).click();
+  const next = page.getByRole("region", { name: t("ai.nextTitle") });
+  await expect(next).toBeVisible();
+  // кнопка «Взять в работу» есть и в блоке действия, и в панели; панель идёт после блока
+  await page.getByRole("button", { name: t("window.take") }).last().click();
+  await expect(next).toHaveCount(0);
+
+  const events = await api.get<{ to_status: string | null; payload: Record<string, unknown> | null }[]>(
+    `/api/v1/findings/${finding.id}/events`,
+  );
+  const taken = events.find((e) => e.to_status === "in_progress");
+  expect(taken).toBeTruthy();
+  expect(taken?.payload?.ai_analysis_id).toBeUndefined();
+  await expect(page.getByText(t("ai.byAnalysis"), { exact: false })).toHaveCount(0);
+
+  await agent.dispose();
+  await api.dispose();
+});

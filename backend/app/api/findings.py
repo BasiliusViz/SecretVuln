@@ -79,7 +79,7 @@ async def finding_checked(
     """Загрузить находку и проверить право на её проект (404 — не читается, 403 — нет права)."""
     finding = await db.get(Finding, finding_id)
     if finding is None:
-        raise not_found("Уязвимость")
+        raise not_found("Уязвимость", feminine=True)
     entity = await db.get(Entity, finding.entity_id)
     ensure(principal, perm, entity, what="Уязвимость")
     return finding
@@ -273,7 +273,7 @@ async def get_finding_by_number(
 ) -> FindingDetail:
     finding_id = await db.scalar(select(Finding.id).where(Finding.number == number))
     if finding_id is None:
-        raise not_found("Уязвимость")
+        raise not_found("Уязвимость", feminine=True)
     return await to_detail(db, await finding_checked(db, principal, finding_id, "finding:read"))
 
 
@@ -492,7 +492,7 @@ async def bulk_action(
     # Всё или ничего: хоть одна не читается — 404, хоть на одну нет права — 403
     access = principal.access
     if any(i not in found or not access.allows("finding:read", found[i][1]) for i in ids):
-        raise not_found("Уязвимость")
+        raise not_found("Уязвимость", feminine=True)
     if not all(access.allows("finding:triage", path) for _, path in found.values()):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав: finding:triage")
     if data.action == "false_positive" and not all(
