@@ -35,6 +35,9 @@ export function FindingWindow() {
   const [helpText, setHelpText] = useState("");
   const [comment, setComment] = useState("");
   const [resolveHelp, setResolveHelp] = useState(false);
+  // Встроенный ИИ: включён ли на сервере и поставлен ли разбор этой находки в очередь
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiQueued, setAiQueued] = useState(false);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(number) || number <= 0) {
@@ -69,8 +72,13 @@ export function FindingWindow() {
     setDecisions([]);
     setAnalyses([]);
     setAiBasis(null);
+    setAiQueued(false);
     setMessage(null);
   }, [number]);
+
+  useEffect(() => {
+    void apiJson<{ enabled: boolean }>("/api/v1/ai/status").then((r) => setAiEnabled(!!r.data?.enabled));
+  }, []);
 
   useEffect(() => {
     void load();
@@ -81,6 +89,7 @@ export function FindingWindow() {
   const entityId = finding?.entity_id ?? null;
   const canTriage = can("finding:triage", entityPath);
   const canApprove = can("finding:approve", entityPath);
+  const canAnalyze = aiEnabled && can("finding:analyze", entityPath);
   const canAssign = canTriage && can("group:read");
   useEffect(() => {
     if (!canAssign || !entityId) return;
@@ -135,6 +144,12 @@ export function FindingWindow() {
     if (!res.ok) setMessage(res.error ?? t("common.error"));
     else if (accept && analysis.kind === "triage" && isOpen && canTriage) setAiBasis(analysis);
     await load();
+  };
+  const requestAiTriage = async () => {
+    setMessage(null);
+    const res = await apiJson(`${base}/ai-triage`, "POST");
+    if (res.ok) setAiQueued(true);
+    else setMessage(res.error ?? t("common.error"));
   };
   const submitHelp = async () => {
     setDialog(null);
@@ -253,7 +268,11 @@ export function FindingWindow() {
         </section>
       )}
 
-      <AiAnalyses analyses={analyses} canReview={canTriage} onReview={(a, accept) => void reviewAnalysis(a, accept)} />
+      <AiAnalyses analyses={analyses} canReview={canTriage} onReview={(a, accept) => void reviewAnalysis(a, accept)}
+        canRequest={canAnalyze}
+        queued={aiQueued}
+        onRequest={() => void requestAiTriage()}
+      />
 
       {aiBasis && canTriage && isOpen && (
         <section className="card" role="region" aria-label={t("ai.nextTitle")} style={SECTION}>

@@ -15,24 +15,44 @@ function who(user: AiAnalysis["author"]): string | null {
 /**
  * Блок «Анализ ИИ» в окне находки. Тексты пишет агент — показываем их только как
  * текст (без разметки). Принятие статус не меняет: окно потом предлагает действие.
+ * Кнопка «Разобрать ИИ» — только при включённом встроенном ИИ и праве finding:analyze;
+ * разбор идёт в фоне, вывод появится в списке после обновления окна.
  */
 export function AiAnalyses({
   analyses,
   canReview,
   onReview,
+  canRequest = false,
+  queued = false,
+  onRequest,
 }: {
   analyses: AiAnalysis[];
   canReview: boolean;
   onReview: (analysis: AiAnalysis, accept: boolean) => void;
+  canRequest?: boolean;
+  queued?: boolean;
+  onRequest?: () => void;
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
-  if (analyses.length === 0) return null;
+  if (analyses.length === 0 && !canRequest) return null;
 
   return (
     <section className="card" style={{ marginBottom: 16 }} aria-label={t("ai.title")}>
       <div className="section-label">{t("ai.title")}</div>
       <p style={{ fontSize: 12, ...MUTED, margin: "0 0 10px" }}>{t("ai.hint")}</p>
+      {canRequest && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: analyses.length ? 12 : 0 }}>
+          <button onClick={onRequest} disabled={queued}>
+            {t("ai.request")}
+          </button>
+          {queued && (
+            <span role="status" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              {t("ai.queued")}
+            </span>
+          )}
+        </div>
+      )}
       <ol style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 14 }}>
         {analyses.map((a) => (
           <li

@@ -59,10 +59,14 @@ test("агент ИИ: токен в админке → вывод через AP
   await expect(listRow.getByText(t("ai.verdict.false_positive"))).toBeVisible();
 
   // Окно находки: блок, принять, предложенное действие с пометкой «по выводу ИИ»
+  const aiStatus = page.waitForResponse((r) => r.url().endsWith("/api/v1/ai/status"));
   await page.goto(`/f/${ref}`);
   const block = page.getByRole("region", { name: t("ai.title") });
   await expect(block.getByText("Тестовый код, пользовательского ввода нет")).toBeVisible();
   await expect(block.getByText(t("ai.verdict.false_positive"))).toBeVisible();
+  // На e2e-стенде встроенный ИИ выключен (SV_AI_BASE_URL пуст) — кнопки разбора нет даже у админа
+  expect(await (await aiStatus).json()).toMatchObject({ enabled: false });
+  await expect(block.getByRole("button", { name: t("ai.request") })).toHaveCount(0);
   await block.getByRole("button", { name: t("ai.accept") }).click();
   await expect(block.getByText(t("ai.review.accepted"))).toBeVisible();
 

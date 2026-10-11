@@ -27,7 +27,8 @@ const PERIODS: MetricPeriod[] = ["30d", "90d", "365d"];
 type Tile = {
   id: string;
   query: MetricQuery;
-  format: "count" | "percent" | "days";
+  // percent — доля 0–1, points — уже проценты 0–100 (ai_agreement)
+  format: "count" | "percent" | "points" | "days";
   alert?: boolean;
 };
 const TILES: Tile[] = [
@@ -35,6 +36,7 @@ const TILES: Tile[] = [
   { id: "overdue", query: { metric: "overdue" }, format: "count", alert: true },
   { id: "slaRatio", query: { metric: "sla_ratio" }, format: "percent" },
   { id: "mttr", query: { metric: "mttr_days" }, format: "days" },
+  { id: "aiAgreement", query: { metric: "ai_agreement" }, format: "points" },
 ];
 const WEEKLY: {
   id: "opened" | "resolved";
@@ -85,14 +87,15 @@ function weeksOf(period: MetricPeriod): string[] {
 
 function MetricTile({
   tile,
-  value,
+  row,
   period,
 }: {
   tile: Tile;
-  value: number | null | undefined;
+  row: MetricRow | null | undefined;
   period: MetricPeriod;
 }) {
   const { t } = useTranslation();
+  const value = row === undefined ? undefined : (row?.value ?? null);
   const text =
     value === undefined
       ? "…"
@@ -100,7 +103,9 @@ function MetricTile({
         ? "—"
         : tile.format === "percent"
           ? `${Math.round(value * 100)}%`
-          : tile.format === "days"
+          : tile.format === "points"
+            ? `${Math.round(value)}%`
+            : tile.format === "days"
             ? value.toFixed(1)
             : String(value);
   const alarm = tile.alert && !!value;
@@ -115,9 +120,12 @@ function MetricTile({
         {text}
       </div>
       <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-        {t(`dashboard.tileHints.${tile.id}`, {
-          period: t(`dashboard.periods.${period}`),
-        })}
+        {tile.format === "points" && value === null
+          ? t("dashboard.noData")
+          : t(`dashboard.tileHints.${tile.id}`, {
+              period: t(`dashboard.periods.${period}`),
+              count: row?.count ?? 0,
+            })}
       </div>
     </div>
   );
@@ -141,7 +149,7 @@ export function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const severityColors = useSeverityColors();
   const [period, setPeriod] = useState<MetricPeriod>("90d");
-  const [tileValues, setTileValues] = useState<Record<string, number | null>>(
+  const [tileRows, setTileRows] = useState<Record<string, MetricRow | null>>(
     {},
   );
   const [weekly, setWeekly] = useState<
@@ -151,13 +159,13 @@ export function Dashboard() {
 
   useEffect(() => {
     let alive = true;
-    setTileValues({});
+    setTileRows({});
     void Promise.all(TILES.map((tile) => aggregate(tile.query, period))).then(
       (results) => {
         if (!alive) return;
-        setTileValues(
+        setTileRows(
           Object.fromEntries(
-            TILES.map((tile, i) => [tile.id, results[i]?.[0]?.value ?? null]),
+            TILES.map((tile, i) => [tile.id, results[i]?.[0] ?? null]),
           ),
         );
       },
@@ -250,7 +258,7 @@ export function Dashboard() {
           <MetricTile
             key={tile.id}
             tile={tile}
-            value={tileValues[tile.id]}
+            row={tileRows[tile.id]}
             period={period}
           />
         ))}

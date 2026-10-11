@@ -248,7 +248,7 @@ export interface NoisyRule {
   top_reasons: { reason_tag: string; count: number }[];
 }
 
-export type MetricName = "count" | "opened" | "resolved" | "overdue" | "sla_ratio" | "mttr_days";
+export type MetricName = "count" | "opened" | "resolved" | "overdue" | "sla_ratio" | "mttr_days" | "ai_agreement";
 export type MetricGroupBy = "none" | "severity" | "scanner" | "team" | "entity" | "week";
 export type MetricPeriod = "7d" | "30d" | "90d" | "365d";
 
@@ -264,6 +264,8 @@ export interface MetricRow {
   key: string | null;
   label: string | null;
   value: number | null;
+  // только у ai_agreement: по скольким рассмотренным выводам посчитано
+  count?: number | null;
 }
 
 export interface MetricResult {
