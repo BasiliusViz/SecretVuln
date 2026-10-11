@@ -26,6 +26,13 @@ class LlmError(Exception):
     """Модель недоступна или так и не вернула валидный ответ."""
 
 
+class LlmRejected(LlmError):
+    """Модель доступна, но не приняла именно этот ввод (400/413/422) — повтор не поможет."""
+
+
+_REJECTED = {400, 413, 422}
+
+
 def extract_json(content: str) -> str:
     text = _THINK.sub("", content).strip()
     text = _FENCE.sub("", text).strip()
@@ -110,7 +117,8 @@ class LlmClient:
         except httpx.HTTPError as exc:
             raise LlmError(f"Модель эмбеддингов недоступна: {exc!r}") from exc
         if not resp.is_success:
-            raise LlmError(f"Модель эмбеддингов ответила {resp.status_code}: {resp.text[:500]}")
+            error = LlmRejected if resp.status_code in _REJECTED else LlmError
+            raise error(f"Модель эмбеддингов ответила {resp.status_code}: {resp.text[:500]}")
         try:
             items = sorted(resp.json()["data"], key=lambda d: d["index"])
             vectors = [[float(x) for x in d["embedding"]] for d in items]

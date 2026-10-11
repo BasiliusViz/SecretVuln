@@ -1,4 +1,6 @@
+import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import type { AiAnalysis } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -87,6 +89,18 @@ export function AiAnalyses({
               <div style={{ marginTop: 6 }}>
                 <div style={{ fontSize: 12, ...MUTED }}>{t("ai.remediation")}</div>
                 <p style={TEXT}>{a.remediation}</p>
+              </div>
+            )}
+            {/* similar — уже отфильтровано сервером по видимости */}
+            {!!a.similar?.length && (
+              <div style={{ fontSize: 12, marginTop: 6 }}>
+                <span style={MUTED}>{t("ai.basedOn")}</span>{" "}
+                {a.similar.map((s, i) => (
+                  <Fragment key={s.id}>
+                    {i > 0 && ", "}
+                    <Link to={`/f/SV-${s.number}`}>SV-{s.number}</Link>
+                  </Fragment>
+                ))}
               </div>
             )}
             <div style={{ fontSize: 12, ...MUTED, marginTop: 6 }}>

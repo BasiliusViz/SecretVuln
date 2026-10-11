@@ -10,6 +10,7 @@ import { DecisionDialog, type DecisionBody } from "../components/DecisionDialog"
 import { DueBadge } from "../components/DueBadge";
 import { Modal } from "../components/Modal";
 import { SeverityBadge } from "../components/SeverityBadge";
+import { SimilarFindings } from "../components/SimilarFindings";
 import { MONO, PRIMARY_BUTTON, formatDate, formatDateTime } from "../components/ui";
 
 const SECTION = { marginBottom: 16 } as const;
@@ -38,6 +39,8 @@ export function FindingWindow() {
   // Встроенный ИИ: включён ли на сервере и поставлен ли разбор этой находки в очередь
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiQueued, setAiQueued] = useState(false);
+  // Векторы (этап 8): блок «Похожие находки» только при включённой модели эмбеддингов
+  const [embeddingsEnabled, setEmbeddingsEnabled] = useState(false);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(number) || number <= 0) {
@@ -77,7 +80,10 @@ export function FindingWindow() {
   }, [number]);
 
   useEffect(() => {
-    void apiJson<{ enabled: boolean }>("/api/v1/ai/status").then((r) => setAiEnabled(!!r.data?.enabled));
+    void apiJson<{ enabled: boolean; embeddings_enabled: boolean }>("/api/v1/ai/status").then((r) => {
+      setAiEnabled(!!r.data?.enabled);
+      setEmbeddingsEnabled(!!r.data?.embeddings_enabled);
+    });
   }, []);
 
   useEffect(() => {
@@ -296,6 +302,8 @@ export function FindingWindow() {
           </div>
         </section>
       )}
+
+      {embeddingsEnabled && <SimilarFindings findingId={finding.id} />}
 
       {canTriage && isOpen && (
         <section style={{ ...SECTION, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>

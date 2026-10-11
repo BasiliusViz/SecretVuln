@@ -80,6 +80,29 @@ export interface AiAnalysis {
   reviewer: { id: string; email: string; full_name: string | null } | null;
   reviewed_at: string | null;
   review_comment: string | null;
+  /** Находки, на которые опирался вывод (встроенный триажёр triage-v2) */
+  similar_ids: string[];
+  /** Те же находки с номерами — только видимые; заполнено в списке выводов находки */
+  similar?: { id: string; number: number }[];
+}
+
+/** Строка блока «Похожие находки»: GET /findings/{id}/similar */
+export interface SimilarFinding {
+  id: string;
+  number: string; // "SV-N"
+  title: string;
+  entity_path: string;
+  status: string;
+  severity: Severity;
+  similarity: number; // 0..1
+  /** Последний переход статуса, сделанный человеком */
+  decision: { status: string; reason: string | null; reason_tag: string | null; at: string } | null;
+}
+
+export interface SimilarResponse {
+  /** Вектор этой находки ещё не посчитан */
+  pending: boolean;
+  items: SimilarFinding[];
 }
 
 export interface ApiToken {

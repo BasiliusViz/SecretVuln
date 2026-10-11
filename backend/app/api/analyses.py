@@ -17,11 +17,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, ensure, get_current_principal, not_found, require_permission
-from app.api.findings import finding_checked
+from app.api.findings import finding_checked, readable
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import AiAnalysis, Entity, Finding
-from app.schemas.ai_analysis import AiAnalysisCreate, AiAnalysisRead, AiAnalysisReview
+from app.schemas.ai_analysis import AiAnalysisCreate, AiAnalysisRead, AiAnalysisReview, SimilarRef
 from app.services.ai_analyses import (
     AnalysisError,
     create_analysis,
@@ -47,9 +47,20 @@ async def get_analyses(
     finding_id: uuid.UUID,
     principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
-) -> list[AiAnalysis]:
+) -> list[AiAnalysisRead]:
     finding = await finding_checked(db, principal, finding_id, "finding:read")
-    return await list_analyses(db, finding.id)
+    analyses = await list_analyses(db, finding.id)
+    ids = {uuid.UUID(i) for a in analyses for i in (a.similar_ids or [])}
+    numbers = dict((await db.execute(
+        select(Finding.id, Finding.number).where(Finding.id.in_(ids), readable(principal))
+    )).all()) if ids else {}
+    return [
+        AiAnalysisRead.model_validate(a).model_copy(update={"similar": [
+            SimilarRef(id=i, number=numbers[uuid.UUID(i)])
+            for i in (a.similar_ids or []) if uuid.UUID(i) in numbers
+        ]})
+        for a in analyses
+    ]
 
 
 @router.post("/findings/{finding_id}/analyses", response_model=AiAnalysisRead, status_code=201)

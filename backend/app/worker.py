@@ -182,7 +182,7 @@ class WorkerSettings:
             ai_triage_finding,
             keep_result=0,
             max_tries=AI_MAX_TRIES,
-            timeout=2 * get_settings().ai_timeout + 60,
+            timeout=3 * get_settings().ai_timeout + 60,  # вектор + разбор с повтором
         ),
         func(embed_pending, keep_result=0, max_tries=1, timeout=1800),
     ]

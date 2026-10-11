@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models import Finding, FindingEmbedding
-from app.services.llm import LlmError
+from app.services.llm import LlmError, LlmRejected
 from app.services.llm import client as llm_client
 from app.services.masking import is_secret_finding, mask, message_of, snippet_of
 
@@ -65,6 +65,7 @@ async def _upsert(db: AsyncSession, rows: list[dict]) -> None:
             "model": stmt.excluded.model,
             "content_hash": stmt.excluded.content_hash,
             "embedding": stmt.excluded.embedding,
+            "source_updated_at": stmt.excluded.source_updated_at,
             "created_at": func.now(),
         },
     )
@@ -74,8 +75,12 @@ async def _upsert(db: AsyncSession, rows: list[dict]) -> None:
 async def embed_pending(db: AsyncSession, client=None, limit: int = 500) -> int:
     """Посчитать векторы находок без вектора, со сменившейся моделью или текстом.
 
-    Возвращает число пересчитанных. Ошибка модели — `LlmError` (уже записанные пачки
-    сохранены). Без клиента и при выключенных векторах — 0.
+    Возвращает число обработанных: пересчитанных и сверенных «текст тот же» — воркер крутит
+    круги, пока не 0. Находки без вектора идут первыми: после повторного импорта старые
+    (сдвинулся updated_at) не задерживают новые. Пачку, которую модель не приняла, повторяем
+    по одной и пропускаем упавшие (их не считаем — следующий круг не крутится впустую).
+    Модель недоступна — `LlmError` (записанное сохранено).
+    Без клиента и при выключенных векторах — 0.
     """
     client = client or embed_client()
     if client is None:
@@ -86,40 +91,68 @@ async def embed_pending(db: AsyncSession, client=None, limit: int = 500) -> int:
         .where(or_(
             FindingEmbedding.finding_id.is_(None),
             FindingEmbedding.model != client.model,
-            # находка менялась после расчёта вектора — сверить хеш текста
-            Finding.updated_at > FindingEmbedding.created_at,
+            # находка менялась после сверки — сверить хеш текста
+            FindingEmbedding.source_updated_at.is_(None),
+            Finding.updated_at != FindingEmbedding.source_updated_at,
         ))
-        .order_by(Finding.created_at)
+        .order_by(FindingEmbedding.finding_id.is_(None).desc(), Finding.created_at)
         .limit(limit)
     )).all()
 
     todo: list[tuple[Finding, str, str]] = []
-    unchanged: list = []
+    unchanged: list[Finding] = []
     for finding, old_hash in rows:
         text = canonical_text(finding)
         new_hash = content_hash(client.model, text)
         if new_hash == old_hash:
-            unchanged.append(finding.id)
+            unchanged.append(finding)
         else:
             todo.append((finding, text, new_hash))
-    if unchanged:
-        # текст тот же — только отметить проверку, чтобы не попадать в выборку снова
+    for finding in unchanged:
+        # текст тот же — только отметить сверку, чтобы не попадать в выборку снова
         await db.execute(
             update(FindingEmbedding)
-            .where(FindingEmbedding.finding_id.in_(unchanged))
-            .values(created_at=func.now())
+            .where(FindingEmbedding.finding_id == finding.id)
+            .values(source_updated_at=finding.updated_at)
         )
+    if unchanged:
         await db.commit()
 
+    done = 0
     for i in range(0, len(todo), BATCH):
         chunk = todo[i : i + BATCH]
-        vectors = await client.embed([text for _, text, _ in chunk])
-        await _upsert(db, [
-            {"finding_id": f.id, "model": client.model, "content_hash": h, "embedding": v}
+        try:
+            vectors = await client.embed([text for _, text, _ in chunk])
+        except LlmRejected:
+            vectors = await _embed_one_by_one(client, chunk)
+        rows_ = [
+            {"finding_id": f.id, "model": client.model, "content_hash": h, "embedding": v,
+             "source_updated_at": f.updated_at}
             for (f, _, h), v in zip(chunk, vectors, strict=True)
-        ])
-        await db.commit()
-    return len(todo)
+            if v is not None
+        ]
+        if rows_:
+            await _upsert(db, rows_)
+            await db.commit()
+        done += len(rows_)
+    return done + len(unchanged)
+
+
+async def _embed_one_by_one(client, chunk: list[tuple[Finding, str, str]]) -> list:
+    """Пачку модель не приняла: по одной, непринятые — None (недоступность — `LlmError`).
+    Не принята ни одна из нескольких — это настройка (имя модели, параметры), а не текст:
+    `LlmError`, чтобы не пропускать молча все находки."""
+    vectors: list = []
+    for finding, text, _ in chunk:
+        try:
+            [vector] = await client.embed([text])
+        except LlmRejected as exc:
+            log.warning("Вектор находки %s не посчитан, пропущена: %s", finding.id, exc)
+            vector = None
+        vectors.append(vector)
+    if len(chunk) > 1 and all(v is None for v in vectors):
+        raise LlmError("Модель эмбеддингов не приняла ни одной находки — проверьте настройку модели")
+    return vectors
 
 
 async def ensure_embedding(db: AsyncSession, finding: Finding, client=None) -> bool:
@@ -137,10 +170,14 @@ async def ensure_embedding(db: AsyncSession, finding: Finding, client=None) -> b
         return True
     try:
         [vector] = await client.embed([text])
-    except LlmError as exc:
+        # savepoint: ошибка записи (например, не та размерность) не откатывает и не
+        # «протухает» объекты вызывающего — разбор ИИ продолжается без похожих
+        async with db.begin_nested():
+            await _upsert(db, [{"finding_id": finding.id, "model": client.model,
+                                "content_hash": new_hash, "embedding": vector,
+                                "source_updated_at": finding.updated_at}])
+    except Exception as exc:  # noqa: BLE001 — любая ошибка вектора: разбор идёт без похожих
         log.warning("Вектор находки %s не посчитан: %s", finding.id, exc)
         return False
-    await _upsert(db, [{"finding_id": finding.id, "model": client.model,
-                        "content_hash": new_hash, "embedding": vector}])
     await db.commit()
     return True

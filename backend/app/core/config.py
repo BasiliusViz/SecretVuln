@@ -1,6 +1,10 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Размерность колонки finding_embeddings.embedding (миграция 0017, под bge-m3)
+EMBED_DIM = 1024
 
 
 class Settings(BaseSettings):
@@ -59,7 +63,7 @@ class Settings(BaseSettings):
     # Эмбеддинги: OpenAI-совместимый /v1/embeddings. Пустая модель — векторы выключены.
     ai_embed_model: str = ""
     ai_embed_base_url: str = ""  # пусто — берётся ai_base_url
-    ai_embed_dim: int = 1024  # должна совпадать с колонкой finding_embeddings.embedding
+    ai_embed_dim: int = EMBED_DIM  # другая размерность — только с новой миграцией колонки
 
     @property
     def ai_enabled(self) -> bool:
@@ -72,6 +76,16 @@ class Settings(BaseSettings):
     @property
     def embeddings_enabled(self) -> bool:
         return bool(self.ai_embed_model.strip() and self.embed_base_url)
+
+    @model_validator(mode="after")
+    def _embed_dim_matches_column(self) -> "Settings":
+        # иначе вставка вектора падала бы ошибкой БД уже в воркере и в разборе ИИ
+        if self.ai_embed_dim != EMBED_DIM:
+            raise ValueError(
+                f"SV_AI_EMBED_DIM={self.ai_embed_dim}: колонка векторов — {EMBED_DIM}, "
+                "другая размерность требует миграции"
+            )
+        return self
 
 
 @lru_cache

@@ -15,8 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal
 from app.models import Entity, Finding, FindingEmbedding, FindingEvent
+from app.models.finding import FindingStatus
 from app.models.finding_event import ActorType
 from app.services.masking import mask
+
+# Переходы, которые считаются решением человека для блока «Похожие» (не «взял в работу»)
+DECIDED_STATUSES = (
+    FindingStatus.confirmed, FindingStatus.false_positive,
+    FindingStatus.risk_accepted, FindingStatus.fixed,
+)
 
 
 def _similarity(distance: float) -> float:
@@ -32,7 +39,8 @@ async def _iterative_scan(db: AsyncSession) -> None:
 async def human_decisions(
     db: AsyncSession, finding_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, dict[str, Any]]:
-    """Последний переход статуса, сделанный человеком, по каждой находке."""
+    """Последнее решение человека по каждой находке: переход в решающий статус
+    (взял в работу или переоткрыл — не решение)."""
     if not finding_ids:
         return {}
     rows = await db.scalars(
@@ -40,7 +48,7 @@ async def human_decisions(
         .where(
             FindingEvent.finding_id.in_(finding_ids),
             FindingEvent.actor_type == ActorType.user,
-            FindingEvent.to_status.is_not(None),
+            FindingEvent.to_status.in_(DECIDED_STATUSES),
         )
         .distinct(FindingEvent.finding_id)
         .order_by(FindingEvent.finding_id, FindingEvent.created_at.desc())

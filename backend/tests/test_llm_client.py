@@ -9,7 +9,7 @@ import pytest
 from pydantic import BaseModel
 
 from app.core.config import Settings
-from app.services.llm import LlmClient, LlmError
+from app.services.llm import LlmClient, LlmError, LlmRejected
 
 
 class Answer(BaseModel):
@@ -205,11 +205,11 @@ async def test_embed_network_error():
 def test_get_embed_client_from_settings(monkeypatch):
     from app.services.llm import client as client_mod
 
-    s = Settings(ai_base_url="http://chat/v1", ai_embed_model="bge-m3", ai_embed_dim=8)
+    s = Settings(ai_base_url="http://chat/v1", ai_embed_model="bge-m3", ai_embed_dim=1024)
     monkeypatch.setattr(client_mod, "get_settings", lambda: s)
     assert s.embeddings_enabled
     c = client_mod.get_embed_client()
-    assert (c.base_url, c.model, c.dim) == ("http://chat/v1", "bge-m3", 8)
+    assert (c.base_url, c.model, c.dim) == ("http://chat/v1", "bge-m3", 1024)
 
     s = Settings(ai_base_url="http://chat/v1", ai_embed_base_url="http://emb/v1",
                  ai_embed_model="bge-m3")
@@ -218,3 +218,12 @@ def test_get_embed_client_from_settings(monkeypatch):
 
     assert not Settings(ai_base_url="http://chat/v1").embeddings_enabled
     assert not Settings(ai_embed_model="bge-m3").embeddings_enabled
+
+
+@pytest.mark.parametrize("code, rejected", [(400, True), (413, True), (422, True),
+                                            (401, False), (429, False), (503, False)])
+async def test_embed_rejected_input_vs_unavailable(code, rejected):
+    """400/413/422 — модель не приняла этот текст (пропустить находку), остальное — недоступна."""
+    with pytest.raises(LlmError) as exc:
+        await _embed_client(lambda r: httpx.Response(code, text="err")).embed(["a"])
+    assert isinstance(exc.value, LlmRejected) is rejected

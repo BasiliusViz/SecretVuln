@@ -134,3 +134,17 @@ async def test_search_by_text_with_filters(db, two_teams):
     assert [f.id for f, _ in rows] == [xss.id]
     assert isinstance(rows[0][0], Finding)
     assert await db.scalar(select(Finding.id).where(Finding.id == sqli.id))
+
+
+async def test_decision_skips_take_and_reopen(db, admin):
+    """«Взял в работу» после решения — не решение: показываем прежнее решение."""
+    entity = await make_entity(db)
+    target = await make_finding(db, entity, "t", raw=_raw("xss render template"))
+    other = await make_finding(db, entity, "o", raw=_raw("xss render"),
+                               status=FindingStatus.in_progress)
+    await _event(db, other, FindingStatus.confirmed, minutes=-10)
+    await _event(db, other, FindingStatus.in_progress, minutes=-5)
+    await embed_pending(db, FakeEmbedClient())
+
+    [item] = (await find_similar(db, await _principal(db, admin[0]), target.id))["items"]
+    assert item["decision"]["status"] == "confirmed"

@@ -115,10 +115,12 @@ class FakeEmbedClient:
     """Детерминированные эмбеддинги без модели: мешок слов, свёрнутый в 1024 измерения.
     Тексты с общими словами — близкие векторы, так что порядок похожих осмыслен."""
 
-    def __init__(self, model: str = "fake-embed", dim: int = 1024, error: bool = False):
+    def __init__(self, model: str = "fake-embed", dim: int = 1024, error: bool = False,
+                 poison: str | None = None):
         self.model = model
         self.dim = dim
         self.error = error
+        self.poison = poison  # пачка с этой подстрокой падает (модель не принимает текст)
         self.calls: list[list[str]] = []
 
     def vector(self, text: str) -> list[float]:
@@ -133,9 +135,11 @@ class FakeEmbedClient:
         return [x / norm for x in v]
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        from app.services.llm import LlmError
+        from app.services.llm import LlmError, LlmRejected
 
         self.calls.append(list(texts))
         if self.error:
             raise LlmError("модель эмбеддингов недоступна")
+        if self.poison and any(self.poison in t for t in texts):
+            raise LlmRejected("400: текст не принят")
         return [self.vector(t) for t in texts]

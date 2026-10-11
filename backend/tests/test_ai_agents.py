@@ -416,3 +416,20 @@ async def test_mcp_get_finding_odd_numbers_are_not_found(client, db, admin, gran
     with pytest.raises(HTTPException) as e:
         await agent_tools.get_finding(db, p, ref)
     assert e.value.status_code == 404
+
+
+async def test_analyses_list_resolves_similar_numbers_visible_only(client, db, two_teams):
+    """similar_ids → номера SV-N одним ответом; невидимые и удалённые пропускаются."""
+    from app.models import AiAnalysis
+
+    t = two_teams
+    fa = await make_finding(db, t.a_svc, "fa")
+    near = await make_finding(db, t.a_svc, "near")
+    alien = await make_finding(db, t.b_svc, "alien")  # не видна dev_a
+    db.add(AiAnalysis(finding_id=fa.id, kind="triage", verdict="uncertain",
+                      similar_ids=[str(near.id), str(alien.id), str(uuid.uuid4())]))
+    await db.commit()
+
+    _, dev_h = t.dev_a
+    [row] = (await client.get(f"/api/v1/findings/{fa.id}/analyses", headers=dev_h)).json()
+    assert row["similar"] == [{"id": str(near.id), "number": near.number}]

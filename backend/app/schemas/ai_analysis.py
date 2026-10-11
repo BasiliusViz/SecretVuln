@@ -35,6 +35,11 @@ class AiAnalysisCreate(BaseModel):
         return self
 
 
+class SimilarRef(BaseModel):
+    id: str
+    number: int
+
+
 class AiAnalysisRead(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -58,6 +63,8 @@ class AiAnalysisRead(BaseModel):
     reviewed_at: datetime | None
     review_comment: str | None
     similar_ids: list[str] = []  # находки, на которые опирался вывод (triage-v2)
+    # те же находки с номерами SV-N — только видимые вызывающему (заполняет список выводов)
+    similar: list[SimilarRef] = []
 
 
 class AiAnalysisReview(BaseModel):

@@ -90,7 +90,8 @@ async def search_findings(
 
     entity_id — проект вместе с подпроектами; no_ai_verdict — ещё без вердикта ИИ.
     query — поиск по смыслу (текст на любом языке): сортировка по близости, в ответе
-    similarity 0–1. Работает, только если в SecretVuln включены векторы.
+    similarity 0–1. Работает, только если в SecretVuln включены векторы. offset при query
+    приблизительный (поиск по индексу неточен на стыке страниц) — лучше одна страница с limit.
     """
     return await _run(ctx, lambda db, p: agent_tools.search_findings(
         db, p,
