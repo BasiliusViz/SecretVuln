@@ -71,3 +71,14 @@ def test_secret_finding_detection_moved_here():
     assert not is_secret_finding(
         Finding(scanner="Semgrep", rule_id="python.sqli", title="SQLi", raw={})
     )
+
+
+@pytest.mark.parametrize("line", ["password=s3cr3t.v2!x", "token: 9f8e.7d6c"])
+def test_unquoted_value_with_dot_is_masked(line):
+    assert MASK in mask(line)
+
+
+@pytest.mark.parametrize("line", ["token = request.headers.get('x')", "password = get_password()",
+                                  "api_key = settings.api_key"])
+def test_code_assignments_untouched(line):
+    assert mask(line) == line

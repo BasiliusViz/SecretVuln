@@ -95,7 +95,8 @@ _ASSIGN = re.compile(
 )
 # значения, которые точно не секрет: типы, пустые и служебные слова
 _NOT_SECRET = {"none", "null", "nil", "true", "false", "str", "string", "int", "bool", "bytes"}
-_TOKEN = re.compile(r"[A-Za-z0-9+_=-]{20,}")
+_TOKEN = re.compile(r"[A-Za-z0-9+/_=-]{20,}")
+_IDENT_CHAIN = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 ENTROPY_MIN_LEN = 20
 ENTROPY_THRESHOLD = 4.0
 
@@ -112,8 +113,9 @@ def _mask_assign(m: re.Match) -> str:
         return m.group(0)
     if not quote:
         # без кавычек: вызов или обращение к атрибуту — это код, а не значение
+        # (сомнение — в пользу маскирования: пропускаем только цепочку идентификаторов)
         rest = m.string[m.end():m.end() + 1]
-        if rest in ("(", ".") or "." in value:
+        if _IDENT_CHAIN.fullmatch(value) and (rest == "(" or "." in value):
             return m.group(0)
         return m.group(1) + MASK
     return f"{m.group(1)}{quote}{MASK}{quote}"
