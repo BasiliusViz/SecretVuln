@@ -267,19 +267,21 @@ async def _decided(db, entity, fp, message, status, reason="тестовые д�
     return f
 
 
-async def test_triage_v2_uses_decided_similar_from_same_root(db, embeddings_on):
+async def test_triage_v2_uses_decided_similar_from_subtree(db, embeddings_on):
     from app.services.embeddings import embed_pending
 
     root = await make_entity(db, "root")
     svc = await make_entity(db, "svc", parent_id=root.id)
-    other_root = await make_entity(db, "other")
+    sub = await make_entity(db, "sub", parent_id=svc.id)
+    sibling = await make_entity(db, "svc2", parent_id=root.id)
     target = await make_finding(db, svc, "t", raw={"message": {"text": "ssrf in fetch url"}})
     key = "AKIAIOSFODNN7EXAMPLE"
-    fp = await _decided(db, root, "fp", f"ssrf in fetch url {key}", FindingStatus.false_positive)
+    fp = await _decided(db, sub, "fp", f"ssrf in fetch url {key}", FindingStatus.false_positive)
     conf = await _decided(db, svc, "c", "ssrf in fetch", FindingStatus.confirmed)
-    # открытая без решения, чужой корень, решение не человека — не берутся
+    # открытая без решения, предок, соседняя ветка, решение не человека — не берутся
     await make_finding(db, svc, "open", raw={"message": {"text": "ssrf in fetch url"}})
-    await _decided(db, other_root, "o", "ssrf in fetch url", FindingStatus.false_positive)
+    await _decided(db, root, "r", "ssrf in fetch url", FindingStatus.false_positive)
+    await _decided(db, sibling, "o", "ssrf in fetch url", FindingStatus.false_positive)
     sys_f = await make_finding(db, svc, "sys", raw={"message": {"text": "ssrf in fetch url"}},
                                status=FindingStatus.risk_accepted)
     await embed_pending(db)

@@ -12,7 +12,7 @@
 - `services/similarity.py`: `find_similar`, `nearest`, `human_decisions`, `search_by_text(db, base_query, text, client)` — принимает готовый `findings_query`, а не фильтры (так нет импорта api из services).
 - API `GET /api/v1/findings/{id}/similar?limit=5`, `/ai/status.embeddings_enabled`, `similar_ids` в `AiAnalysisRead`.
 - MCP `find_similar(finding, k)` (параметр назван `finding`, как у `get_finding`), `search_findings(query=…)`; заголовок находки — в `untrusted`.
-- Триажёр `triage-v2`.
+- Триажёр `triage-v2`: похожие — только из поддерева проекта находки (спека была «тот же корень», сужено по проверке безопасности, решение пользователя 11.10). Поэтому все `similar_ids` видны любому, кто видит саму находку. Маскирование: значение без кавычек пропускается, только если это цепочка идентификаторов перед `(` или с точкой.
 - Тесты: `test_masking`, `test_embeddings`, `test_similarity`, `test_similar_api`, `test_mcp_similar`, дополнены `test_llm_client`, `test_llm_prompts`, `test_builtin_triage`. Заглушка модели — `FakeEmbedClient` (`tests/factories.py`), фикстура `embeddings_on` (`conftest.py`). Весь pytest зелёный.
 
 ## Сессия 2 — фронтенд (задачи 13–16)

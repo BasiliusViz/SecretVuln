@@ -41,18 +41,18 @@ def _cut(text: str, limit: int) -> str:
 async def similar_decided(
     db: AsyncSession, finding: Finding, embed=None
 ) -> list[tuple[Finding, dict | None]]:
-    """До 3 похожих находок, решённых человеком, из того же корневого проекта.
+    """До 3 похожих находок, решённых человеком, из проекта находки и его подпроектов.
 
-    Только тот же корень: чужие ветки дерева могут быть закрыты от владельцев этой находки.
+    Только поддерево: кто видит находку, видит и всё её поддерево, поэтому текст вывода ИИ
+    не перескажет находку соседней ветки, закрытой от читателей этой.
     Векторы выключены или модель недоступна — пустой список, разбор идёт без похожих.
     """
     embed = embed or embed_client()
     if embed is None or not await ensure_embedding(db, finding, embed):
         return []
     path = await db.scalar(select(Entity.path_cache).where(Entity.id == finding.entity_id))
-    root = path.split("/")[0]
-    same_root = select(Entity.id).where(or_(
-        Entity.path_cache == root, Entity.path_cache.startswith(root + "/", autoescape=True)
+    subtree = select(Entity.id).where(or_(
+        Entity.path_cache == path, Entity.path_cache.startswith(path + "/", autoescape=True)
     ))
     human_decided = (
         select(FindingEvent.id)
@@ -63,7 +63,7 @@ async def similar_decided(
         )
         .exists()
     )
-    scope = Finding.entity_id.in_(same_root) & Finding.status.in_(DECIDED) & human_decided
+    scope = Finding.entity_id.in_(subtree) & Finding.status.in_(DECIDED) & human_decided
     pairs = await nearest(db, finding, scope, SIMILAR_LIMIT) or []
     decisions = await human_decisions(db, [f.id for f, _ in pairs])
     return [(f, decisions.get(f.id)) for f, _ in pairs]

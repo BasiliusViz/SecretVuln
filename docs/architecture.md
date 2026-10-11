@@ -99,7 +99,7 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - Воркер: задача `embed_pending` с `_job_id="embed"` (одна за раз), ставится после импорта и cron в :17 каждого часа; ошибка модели — в лог.
 - `services/similarity.py`: `nearest` / `find_similar` — косинус, фильтр прав `Access` в том же запросе, `SET LOCAL hnsw.iterative_scan = relaxed_order` (иначе фильтр обрезает выдачу индекса) + досортировка; исключаются сама находка, тот же `fingerprint` и векторы другой модели. `decision` — последний переход статуса от человека (`finding_events.actor_type=user`). `search_by_text` — поверх `findings_query`.
 - API: `GET /findings/{id}/similar?limit=1..20` (`finding:read`, невидимая → 404, выключено → 503, нет вектора → `pending`), `/ai/status.embeddings_enabled`. MCP: `find_similar(finding, k)`, `search_findings(query=…)` (+ `similarity`).
-- Триажёр `triage-v2`: до 3 похожих в `false_positive/confirmed/risk_accepted`, где текущий статус поставил человек, **только из того же корневого проекта**; в промпте внутри границы недоверенных данных, замаскированы; id — в `similar_ids` обеих строк.
+- Триажёр `triage-v2`: до 3 похожих в `false_positive/confirmed/risk_accepted`, где текущий статус поставил человек, **только из поддерева проекта находки** (не весь корень: кто видит находку, видит и поддерево — соседняя ветка не утечёт в текст вывода ИИ); в промпте внутри границы недоверенных данных, замаскированы; id — в `similar_ids` обеих строк.
 
 ## Локализация и дизайн (см. frontend/DESIGN.md)
 
