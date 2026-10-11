@@ -9,6 +9,10 @@
 - mttr_days — среднее «закрытие в fixed − first_seen» в днях по закрытиям за период.
   Считается по событиям, не по находкам: переоткрытая и снова исправленная находка
   входит дважды, второй раз — от того же first_seen (полное время от обнаружения).
+- ai_agreement — процент (0–100) согласия людей с вердиктами ИИ по выводам «triage»
+  за период (по created_at вывода); в строке ещё `count` — сколько выводов учтено.
+  Явное согласие — вывод принят/отклонён; иначе неявное — по итоговому статусу находки.
+  `uncertain` и находки без решения (new/triaged) не учитываются.
 
 resolved и mttr_days считаются по истории (`finding_events`: переход из открытого
 статуса в закрытый), а не по `resolved_at`: переоткрытие обнуляет `resolved_at`,
@@ -22,10 +26,11 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Float, cast, func, literal, select
+from sqlalchemy import Float, and_, case, cast, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Entity, Finding, FindingEvent, UserGroup
+from app.models import AiAnalysis, AiAnalysisKind, Entity, Finding, FindingEvent, UserGroup
+from app.models.ai_analysis import AiReviewStatus, AiVerdict
 from app.models.finding import CLOSED_STATUSES, OPEN_STATUSES, FindingStatus
 from app.schemas.metrics import MetricQuery, MetricRow
 from app.services.entity_paths import subtree_ids
@@ -43,6 +48,7 @@ TIME_COLUMN = {
     "overdue": Finding.due_at,
     "sla_ratio": Finding.due_at,
     "mttr_days": FindingEvent.created_at,
+    "ai_agreement": AiAnalysis.created_at,
 }
 # Метрики по событиям закрытия: Finding JOIN FindingEvent
 CLOSURE = {"resolved", "mttr_days"}
@@ -53,10 +59,33 @@ GROUP_COLUMN = {
     "scanner": Finding.scanner,
     "team": Finding.assignee_group_id,
     "entity": Finding.entity_id,
+    "ai_agent": AiAnalysis.agent,
+    "ai_model": AiAnalysis.model,
 }
+
+# Статусы, которыми человек подтвердил, что уязвимость настоящая
+_CONFIRMED = (
+    FindingStatus.confirmed, FindingStatus.in_progress, FindingStatus.fixed,
+    FindingStatus.risk_accepted,
+)
+_FP, _TP = AiVerdict.false_positive, AiVerdict.true_positive
+_IS_FP = Finding.status == FindingStatus.false_positive
+_IS_CONFIRMED = Finding.status.in_(_CONFIRMED)
+# 1 — согласие, 0 — несогласие, NULL — вывод не учитывается
+AGREEMENT = case(
+    (AiAnalysis.review_status == AiReviewStatus.accepted, 1),
+    (AiAnalysis.review_status == AiReviewStatus.rejected, 0),
+    (and_(AiAnalysis.verdict == _FP, _IS_FP), 1),
+    (and_(AiAnalysis.verdict == _FP, _IS_CONFIRMED), 0),
+    (and_(AiAnalysis.verdict == _TP, _IS_CONFIRMED), 1),
+    (and_(AiAnalysis.verdict == _TP, _IS_FP), 0),
+    else_=None,
+)
 
 
 def _value(metric: str, now: datetime):
+    if metric == "ai_agreement":
+        return func.avg(AGREEMENT) * 100
     if metric == "sla_ratio":
         on_time = func.count().filter(Finding.due_at >= now)
         return cast(on_time, Float) / func.nullif(func.count(), 0)
@@ -87,6 +116,12 @@ def _metric_conditions(metric: str, now: datetime) -> list:
         return [Finding.status.in_(OPEN_STATUSES), Finding.due_at.is_not(None)]
     if metric == "mttr_days":
         return _closure([FindingStatus.fixed])
+    if metric == "ai_agreement":
+        return [
+            AiAnalysis.kind == AiAnalysisKind.triage,
+            AiAnalysis.verdict.in_([_TP, _FP]),
+            AGREEMENT.is_not(None),
+        ]
     return []
 
 
@@ -141,9 +176,12 @@ async def aggregate(
         group = GROUP_COLUMN[query.group_by]
     group = group.label("grp")
 
-    q = select(group, value)
+    is_ai = query.metric == "ai_agreement"
+    q = select(group, value, (func.count() if is_ai else literal(None)).label("cnt"))
     if query.metric in CLOSURE:
         q = q.select_from(Finding).join(FindingEvent, FindingEvent.finding_id == Finding.id)
+    elif is_ai:
+        q = q.select_from(Finding).join(AiAnalysis, AiAnalysis.finding_id == Finding.id)
     q = q.where(*conds).group_by(group)
     if query.group_by == "week":
         q = q.order_by(group.desc())
@@ -155,7 +193,7 @@ async def aggregate(
 
     labels = await _labels(db, query.group_by, [r.grp for r in rows])
     result: list[MetricRow] = []
-    for grp, val in rows:
+    for grp, val, cnt in rows:
         if grp is None:
             key = None
         elif query.group_by == "week":
@@ -167,8 +205,11 @@ async def aggregate(
         label = labels.get(grp, key) if grp is not None else None
         result.append(MetricRow(
             key=key, label=label, value=round(float(val), 4) if val is not None else None,
+            count=cnt,
         ))
     if query.group_by == "none" and not result:
-        empty = None if query.metric in ("sla_ratio", "mttr_days") else 0
-        result.append(MetricRow(key="all", label="all", value=empty))
+        empty = None if query.metric in ("sla_ratio", "mttr_days", "ai_agreement") else 0
+        result.append(MetricRow(
+            key="all", label="all", value=empty, count=0 if is_ai else None,
+        ))
     return result

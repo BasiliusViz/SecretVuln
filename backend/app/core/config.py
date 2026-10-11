@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     ldap_user_filter: str = "(mail={email})"
     ldap_group_search_base: str = "ou=groups,dc=secretvuln,dc=local"
 
+    # Встроенный ИИ: OpenAI-совместимый /v1/chat/completions. Пустой адрес — выключен.
+    ai_base_url: str = ""
+    ai_api_key: str = ""
+    ai_model: str = ""
+    ai_timeout: float = 60
+    # сколько новых находок одного импорта разбирать автоматически; 0 — автозапуск выключен
+    ai_auto_limit: int = 50
+
+    @property
+    def ai_enabled(self) -> bool:
+        return bool(self.ai_base_url.strip())
+
 
 @lru_cache
 def get_settings() -> Settings:

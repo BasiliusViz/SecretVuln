@@ -60,6 +60,8 @@ ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/findings/{finding_id}/analyses"): "point",
     ("POST", "/api/v1/findings/{finding_id}/analyses"): "point",
     ("POST", "/api/v1/analyses/{analysis_id}/review"): "point",
+    ("POST", "/api/v1/findings/{finding_id}/ai-triage"): "point",
+    ("GET", "/api/v1/ai/status"): "self",  # только флаг и имя модели, без данных проектов
     # сервисные аккаунты и токены — глобальный token:manage
     ("GET", "/api/v1/service-accounts"): "global",
     ("POST", "/api/v1/service-accounts"): "global",

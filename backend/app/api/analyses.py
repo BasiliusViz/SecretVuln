@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import Principal, ensure, not_found, require_permission
+from app.api.deps import Principal, ensure, get_current_principal, not_found, require_permission
 from app.api.findings import finding_checked
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import AiAnalysis, Entity, Finding
 from app.schemas.ai_analysis import AiAnalysisCreate, AiAnalysisRead, AiAnalysisReview
@@ -23,6 +24,7 @@ from app.services.ai_analyses import (
     list_analyses,
     review_analysis,
 )
+from app.services import audit
 
 router = APIRouter(prefix="/api/v1", tags=["ai-analyses"])
 
@@ -77,3 +79,34 @@ async def review(
         raise HTTPException(e.status_code, e.detail)
     await db.commit()
     return await _reload(db, analysis.id)
+
+
+@router.post("/findings/{finding_id}/ai-triage", status_code=202)
+async def request_ai_triage(
+    finding_id: uuid.UUID,
+    request: Request,
+    principal: Principal = Depends(require_permission("finding", "analyze")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Разбор встроенным ИИ — в очередь, всегда (повторный разбор тоже)."""
+    finding = await finding_checked(db, principal, finding_id, "finding:analyze")
+    if not get_settings().ai_enabled:
+        raise HTTPException(503, "Встроенный ИИ не настроен")
+    entity = await db.get(Entity, finding.entity_id)
+    audit.record_audit(
+        db, principal.user, audit.AI_TRIAGE_REQUEST,
+        target=("finding", finding.id, f"SV-{finding.number}"),
+        entity=entity, ip=audit.client_ip(request),
+    )
+    await db.commit()
+    from app.worker import enqueue_ai_triage
+
+    await enqueue_ai_triage(str(finding.id))
+    return {"queued": True}
+
+
+@router.get("/ai/status")
+async def ai_status(principal: Principal = Depends(get_current_principal)) -> dict:
+    settings = get_settings()
+    enabled = settings.ai_enabled
+    return {"enabled": enabled, "model": (settings.ai_model or None) if enabled else None}

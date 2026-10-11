@@ -61,6 +61,8 @@ SERVICE_ACCOUNT_UPDATE = "service_account.update"
 TOKEN_CREATE = "token.create"
 TOKEN_REVOKE = "token.revoke"
 
+AI_TRIAGE_REQUEST = "ai_triage.request"
+
 ACTIONS: tuple[str, ...] = tuple(
     v for k, v in dict(globals()).items() if k.isupper() and isinstance(v, str) and "." in v
 )

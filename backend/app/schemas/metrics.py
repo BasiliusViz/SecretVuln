@@ -1,12 +1,14 @@
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.finding import Severity
 
-Metric = Literal["count", "opened", "resolved", "overdue", "sla_ratio", "mttr_days"]
-GroupBy = Literal["none", "severity", "scanner", "team", "entity", "week"]
+Metric = Literal[
+    "count", "opened", "resolved", "overdue", "sla_ratio", "mttr_days", "ai_agreement"
+]
+GroupBy = Literal["none", "severity", "scanner", "team", "entity", "week", "ai_agent", "ai_model"]
 Period = Literal["7d", "30d", "90d", "365d"]
 
 
@@ -30,12 +32,20 @@ class MetricQuery(BaseModel):
     period: Period = "30d"
     filters: MetricFilters = Field(default_factory=MetricFilters)
 
+    @model_validator(mode="after")
+    def _ai_groups(self) -> "MetricQuery":
+        if self.group_by in ("ai_agent", "ai_model") and self.metric != "ai_agreement":
+            raise ValueError("Группировка по агенту или модели ИИ — только для ai_agreement")
+        return self
+
 
 class MetricRow(BaseModel):
     # значение группы: severity/scanner/id команды или проекта/дата недели; None — «без команды»
     key: str | None
     label: str | None
     value: float | None
+    # ai_agreement: сколько выводов учтено; у остальных метрик — None
+    count: int | None = None
 
 
 class MetricResult(BaseModel):

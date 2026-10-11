@@ -574,6 +574,9 @@
       "token": {
         "create": "Выдача API-токена",
         "revoke": "Отзыв API-токена"
+      },
+      "ai_triage": {
+        "request": "Запуск разбора ИИ"
       }
     },
     "targetType": {
