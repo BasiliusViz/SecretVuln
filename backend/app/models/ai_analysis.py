@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, Float, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
@@ -64,6 +64,10 @@ class AiAnalysis(Base, UUIDPKMixin, TimestampMixin):
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     review_comment: Mapped[str | None] = mapped_column(Text)
+    # id находок (строки), на которые опирался вывод — похожие решённые (triage-v2)
+    similar_ids: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default="[]", nullable=False
+    )
 
     author = relationship("User", foreign_keys=[created_by], lazy="selectin")
     reviewer = relationship("User", foreign_keys=[reviewed_by], lazy="selectin")

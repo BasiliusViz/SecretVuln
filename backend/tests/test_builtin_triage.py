@@ -68,7 +68,8 @@ async def test_triage_writes_summary_and_triage(db):
     for r in stored:
         assert r.agent == BUILTIN_AGENT == "sv-builtin"
         assert r.model == "fake-model"
-        assert r.prompt_version == "triage-v1"
+        assert r.prompt_version == "triage-v2"
+        assert r.similar_ids == []  # векторы выключены — без похожих
         assert r.created_by is None
         assert r.review_status == AiReviewStatus.pending
     summary = next(r for r in stored if r.kind == AiAnalysisKind.summary)
@@ -246,3 +247,76 @@ def test_builtin_agent_name_is_reserved():
 
     with pytest.raises(ValidationError):
         AiAnalysisCreate(kind=AiAnalysisKind.summary, explanation="x", agent=" SV-Builtin ")
+
+
+# --- triage-v2: похожие решённые ------------------------------------------------------
+
+
+async def _decided(db, entity, fp, message, status, reason="тестовые данные"):
+    from datetime import datetime, timezone
+
+    from app.models import FindingEvent
+    from app.models.finding_event import ActorType, FindingEventType
+
+    f = await make_finding(db, entity, fp, raw={"message": {"text": message}}, status=status)
+    db.add(FindingEvent(
+        finding_id=f.id, event_type=FindingEventType.status_changed, actor_type=ActorType.user,
+        to_status=status, reason=reason, created_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+    return f
+
+
+async def test_triage_v2_uses_decided_similar_from_same_root(db, embeddings_on):
+    from app.services.embeddings import embed_pending
+
+    root = await make_entity(db, "root")
+    svc = await make_entity(db, "svc", parent_id=root.id)
+    other_root = await make_entity(db, "other")
+    target = await make_finding(db, svc, "t", raw={"message": {"text": "ssrf in fetch url"}})
+    key = "AKIAIOSFODNN7EXAMPLE"
+    fp = await _decided(db, root, "fp", f"ssrf in fetch url {key}", FindingStatus.false_positive)
+    conf = await _decided(db, svc, "c", "ssrf in fetch", FindingStatus.confirmed)
+    # открытая без решения, чужой корень, решение не человека — не берутся
+    await make_finding(db, svc, "open", raw={"message": {"text": "ssrf in fetch url"}})
+    await _decided(db, other_root, "o", "ssrf in fetch url", FindingStatus.false_positive)
+    sys_f = await make_finding(db, svc, "sys", raw={"message": {"text": "ssrf in fetch url"}},
+                               status=FindingStatus.risk_accepted)
+    await embed_pending(db)
+    client = FakeClient()
+
+    rows = await triage_finding(db, target.id, client)
+    await db.commit()
+
+    expected = {str(fp.id), str(conf.id)}
+    for r in rows:
+        assert r.prompt_version == "triage-v2"
+        assert set(r.similar_ids) == expected
+    sent = client.calls[0][1]["content"]
+    assert key not in sent and "[MASKED]" in sent
+    assert "тестовые данные" in sent
+    assert f"SV-{sys_f.number}" not in sent
+    # похожие — внутри границы недоверенных данных
+    assert sent.index("ssrf in fetch") < sent.rindex("</finding_data")
+    assert len(sent.split("Похожая находка")) - 1 == 2
+
+
+async def test_triage_v2_limits_to_three(db, embeddings_on):
+    from app.services.embeddings import embed_pending
+
+    root = await make_entity(db, "root")
+    target = await make_finding(db, root, "t", raw={"message": {"text": "xss a"}})
+    for i in range(5):
+        await _decided(db, root, f"d{i}", f"xss a {i}", FindingStatus.false_positive)
+    await embed_pending(db)
+    rows = await triage_finding(db, target.id, FakeClient())
+    assert len(rows[0].similar_ids) == 3
+
+
+async def test_triage_v2_embedding_error_goes_without_similar(db, embeddings_on):
+    root = await make_entity(db, "root")
+    target = await make_finding(db, root, "t")
+    embeddings_on.error = True
+    client = FakeClient()
+    rows = await triage_finding(db, target.id, client)
+    assert rows[0].similar_ids == [] and len(client.calls) == 1

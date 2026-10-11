@@ -8,19 +8,24 @@ from __future__ import annotations
 import uuid
 from typing import Protocol
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import AiAnalysis, AiAnalysisKind, AiReviewStatus, Finding
+from app.models import AiAnalysis, AiAnalysisKind, AiReviewStatus, Entity, Finding, FindingStatus
 from app.models.ai_analysis import AiVerdict
-from app.models.finding_event import FindingEvent, FindingEventType
+from app.models.finding_event import ActorType, FindingEvent, FindingEventType
 from app.models.import_ import Import, ImportStatus
 from app.services.ai_analyses import _lock_finding, refresh_ai_verdict
+from app.services.embeddings import embed_client, ensure_embedding
 from app.services.llm import client_from_settings
 from app.services.llm.prompts import PROMPT_VERSION, TriageAnswer, build_messages
+from app.services.similarity import human_decisions, nearest
 
 BUILTIN_AGENT = "sv-builtin"
+SIMILAR_LIMIT = 3
+# решённые человеком статусы: на них триажёр опирается как на практику команды
+DECIDED = (FindingStatus.false_positive, FindingStatus.confirmed, FindingStatus.risk_accepted)
 
 
 class ChatClient(Protocol):
@@ -33,8 +38,39 @@ def _cut(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+async def similar_decided(
+    db: AsyncSession, finding: Finding, embed=None
+) -> list[tuple[Finding, dict | None]]:
+    """До 3 похожих находок, решённых человеком, из того же корневого проекта.
+
+    Только тот же корень: чужие ветки дерева могут быть закрыты от владельцев этой находки.
+    Векторы выключены или модель недоступна — пустой список, разбор идёт без похожих.
+    """
+    embed = embed or embed_client()
+    if embed is None or not await ensure_embedding(db, finding, embed):
+        return []
+    path = await db.scalar(select(Entity.path_cache).where(Entity.id == finding.entity_id))
+    root = path.split("/")[0]
+    same_root = select(Entity.id).where(or_(
+        Entity.path_cache == root, Entity.path_cache.startswith(root + "/", autoescape=True)
+    ))
+    human_decided = (
+        select(FindingEvent.id)
+        .where(
+            FindingEvent.finding_id == Finding.id,
+            FindingEvent.actor_type == ActorType.user,
+            FindingEvent.to_status == Finding.status,
+        )
+        .exists()
+    )
+    scope = Finding.entity_id.in_(same_root) & Finding.status.in_(DECIDED) & human_decided
+    pairs = await nearest(db, finding, scope, SIMILAR_LIMIT) or []
+    decisions = await human_decisions(db, [f.id for f, _ in pairs])
+    return [(f, decisions.get(f.id)) for f, _ in pairs]
+
+
 async def triage_finding(
-    db: AsyncSession, finding_id: uuid.UUID, client: ChatClient
+    db: AsyncSession, finding_id: uuid.UUID, client: ChatClient, embed=None
 ) -> list[AiAnalysis]:
     """Разобрать находку. Ошибка модели (`LlmError`) пробрасывается — строк не пишем.
 
@@ -44,7 +80,9 @@ async def triage_finding(
     finding = await db.get(Finding, finding_id)
     if finding is None:
         return []
-    messages = build_messages(finding)
+    similar = await similar_decided(db, finding, embed)
+    messages = build_messages(finding, similar)
+    similar_ids = [str(f.id) for f, _ in similar]
     await db.commit()  # пока только читали — закрываем транзакцию на время ответа модели
     answer = await client.chat_json(messages, TriageAnswer)
 
@@ -57,6 +95,7 @@ async def triage_finding(
         prompt_version=PROMPT_VERSION,
         created_by=None,
         review_status=AiReviewStatus.pending,
+        similar_ids=similar_ids,
     )
     rows = [
         AiAnalysis(

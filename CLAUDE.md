@@ -6,8 +6,8 @@ Vulnerability management платформа: импорт находок без�
 
 ## Стек
 
-- **Backend**: Python 3.12+ (venv `backend/.venv`, 3.14), FastAPI, SQLAlchemy 2.0 async (asyncpg) + Alembic (sync, psycopg), PostgreSQL
-- **Фоновые задачи**: Redis + ARQ (`app/worker.py`: `process_import`, cron `expire_risks`)
+- **Backend**: Python 3.12+ (venv `backend/.venv`, 3.14), FastAPI, SQLAlchemy 2.0 async (asyncpg) + Alembic (sync, psycopg), PostgreSQL 16 + pgvector (образ `pgvector/pgvector:pg16`)
+- **Фоновые задачи**: Redis + ARQ (`app/worker.py`: `process_import`, разбор ИИ, векторы, cron `expire_risks`)
 - **Авторизация**: Casbin, роли и права настраиваются в админке; **аутентификация**: local (bcrypt напрямую, НЕ passlib) + LDAP (ldap3, dev — контейнер lldap), JWT (pyjwt)
 - **Файлы SARIF**: диск (`SV_STORAGE_PATH`, путь относительный — API и воркер запускать из `backend/`) или S3/MinIO (`SV_STORAGE_BACKEND=s3`, порт 9002)
 - **Frontend**: React 19 + TypeScript (Vite 7), react-router 7, react-i18next, Recharts; dev-сервер проксирует /api на :8000
@@ -48,6 +48,8 @@ Vulnerability management платформа: импорт находок без�
 | `api/service_accounts.py`, `services/api_tokens.py` | Сервисные аккаунты (агенты) и API-токены `sv_…` |
 | `api/analyses.py`, `services/ai_analyses.py` | Выводы ИИ (`ai_analyses`), рассмотрение, `findings.ai_verdict` |
 | `mcp_server.py`, `services/agent_tools.py` | MCP для агентов (порт `SV_MCP_PORT`), инструменты поверх тех же запросов |
+| `services/masking.py` | Маскирование секретов и `is_secret_finding` (эмбеддинги и промпт ИИ) |
+| `services/embeddings.py`, `services/similarity.py` | Векторы находок (`finding_embeddings`, pgvector), «Похожие», поиск по смыслу |
 | `authz/enforcer.py`, `authz/permissions.py`, `authz/rbac_model.conf` | Casbin: enforcer, каталог прав, модель |
 | `models/` | SQLAlchemy: `entity`, `finding`, `finding_event`, `decision_request`, `import_`, `user`, `user_group`, `role` |
 | `schemas/` | Pydantic по тем же сущностям |
@@ -60,7 +62,7 @@ Vulnerability management платформа: импорт находок без�
 | `services/sarif/` | `parser.py` (разбор + `versionControlProvenance`), `normalizers.py` (severity по сканерам) |
 | `services/audit.py` | `record_audit`, `snapshot`/`diff`, белые списки `FIELDS`, список действий |
 | `services/storage.py` | Хранилище SARIF: диск или S3/MinIO по `SV_STORAGE_BACKEND` |
-| `worker.py` | ARQ: `process_import`, cron `expire_risks` |
+| `worker.py` | ARQ: `process_import`, `ai_triage_finding`, `embed_pending`; cron `expire_risks`, `embed_cron` |
 | `cli.py` | `create-admin`, `create-user`, `seed-roles` (там же список встроенных ролей) |
 | `tests/conftest.py`, `tests/factories.py` | Тестовая БД, фикстуры пользователей и клиента, фабрики данных |
 
@@ -107,6 +109,7 @@ Vulnerability management платформа: импорт находок без�
 - **UI-тесты** — сделаны: Playwright, 11 тестов в 8 файлах на изолированном стенде, `scripts/check-all.ps1` / `/sv-check` проверяет всё одной командой. **Дальше**: AI-разбор, этап 6 «Выход для агентов» — спека `docs/superpowers/specs/2026-10-10-stage6-ai-agent-output.md` (там же порядок этапов 6–10 и принятые решения).
 - **Этап 6 «Выход для агентов»** — сделан (бэкенд + фронтенд), прошёл ревью: сервисные аккаунты и токены `sv_`, `ai_analyses`, MCP, блок «Анализ ИИ», «Вердикт ИИ» в списках. Ручная проверка (API, MCP, пять тем) и недостающие тесты — сделаны 11.10. **Дальше — этап 7** (порядок — в спеке этапа 6).
 - **Этап 7 «Встроенный ИИ»** — сделан, прошёл ревью, в `main`: LLM-клиент (`services/llm/`, `SV_AI_*`), промпт с защитой от prompt-injection и без секретов, авторазбор новых находок после импорта и кнопка «Разобрать ИИ» (право `finding:triage`; `finding:analyze` — только агентам), не больше одного разбора за раз в воркере, плитка «Согласие с ИИ» (`ai_agreement`, последний вывод агента, автозакрытие не считается решением). Проверка на живой модели — когда она будет.
+- **Этап 8 «Векторная база»** — бэкенд сделан (сессия 1): pgvector, `finding_embeddings`, маскирование, `embed_pending` в воркере, `/findings/{id}/similar`, MCP `find_similar` и `search_findings(query)`, триажёр `triage-v2`. **Дальше — сессия 2 (фронтенд)**: записка `docs/stage8-handoff.md`, план — задачи 13–16.
 - **Отложено, пока не попросят**: Helm/деплой (Dockerfile ещё нет — понадобятся при первом реальном деплое), конструктор дашборд-виджетов — `docs/superpowers/specs/2026-10-05-stage6-dashboard-widgets.md`.
 
 ## Документы

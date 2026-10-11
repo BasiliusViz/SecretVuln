@@ -24,6 +24,7 @@ dependencies = [
     "pyyaml>=6.0",
     "mcp>=2.3",                      # MCP-сервер для агентов (app/mcp_server.py)
     "httpx>=0.27",                   # клиент встроенного ИИ (app/services/llm)
+    "pgvector>=0.3",                 # тип vector для SQLAlchemy (этап 8)
 ]
 
 [project.optional-dependencies]

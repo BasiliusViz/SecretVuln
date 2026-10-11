@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import get_settings
 from app.models.import_ import Import, ImportStatus
-from app.services import builtin_triage
+from app.services import builtin_triage, embeddings
 from app.services.import_processing import ImportRejected, apply_import
 from app.services.llm import LlmError
 from app.services.risk_expiry import expire_risk_acceptances
@@ -81,6 +81,7 @@ async def process_import(ctx: dict, import_id: str) -> None:
             return
 
         await enqueue_auto_triage(ctx, db, imp.id)
+    await enqueue_embeddings(ctx)
 
 
 async def enqueue_auto_triage(ctx: dict, db: AsyncSession, import_id: uuid.UUID) -> None:
@@ -115,6 +116,44 @@ async def ai_triage_finding(ctx: dict, finding_id: str) -> None:
     logger.info("AI triage of %s done: %d rows", finding_id, len(rows))
 
 
+# Векторы считает одна задача с фиксированным id: две одновременно не идут (keep_result=0 —
+# после окончания можно ставить снова). Ставится после импорта и cron раз в час: дочищает
+# сбои модели и переиндексирует при смене модели.
+EMBED_JOB_ID = "embed"
+EMBED_LIMIT = 500  # находок за круг
+EMBED_MAX_ROUNDS = 40  # потолок за один запуск, остальное — следующий
+
+
+async def enqueue_embeddings(ctx: dict) -> None:
+    if not get_settings().embeddings_enabled:
+        return
+    try:
+        await ctx["redis"].enqueue_job("embed_pending", _job_id=EMBED_JOB_ID)
+    except Exception:
+        logger.exception("Embedding job enqueue failed")
+
+
+async def embed_cron(ctx: dict) -> None:
+    await enqueue_embeddings(ctx)
+
+
+async def embed_pending(ctx: dict) -> None:
+    session_factory: async_sessionmaker = ctx["session_factory"]
+    total = 0
+    async with session_factory() as db:
+        try:
+            for _ in range(EMBED_MAX_ROUNDS):
+                done = await embeddings.embed_pending(db, limit=EMBED_LIMIT)
+                total += done
+                if done == 0:
+                    break
+        except LlmError as exc:
+            await db.rollback()
+            logger.warning("Embeddings stopped after %d findings: %s", total, exc)
+            return
+    logger.info("Embeddings: %d findings embedded", total)
+
+
 async def expire_risks(ctx: dict) -> None:
     session_factory: async_sessionmaker = ctx["session_factory"]
     async with session_factory() as db:
@@ -145,8 +184,12 @@ class WorkerSettings:
             max_tries=AI_MAX_TRIES,
             timeout=2 * get_settings().ai_timeout + 60,
         ),
+        func(embed_pending, keep_result=0, max_tries=1, timeout=1800),
     ]
-    cron_jobs = [cron(expire_risks, hour={3}, minute={0})]
+    cron_jobs = [
+        cron(expire_risks, hour={3}, minute={0}),
+        cron(embed_cron, minute={17}),
+    ]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)

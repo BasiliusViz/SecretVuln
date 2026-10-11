@@ -57,6 +57,7 @@ class AiAnalysisRead(BaseModel):
     reviewer: UserBriefLite | None
     reviewed_at: datetime | None
     review_comment: str | None
+    similar_ids: list[str] = []  # находки, на которые опирался вывод (triage-v2)
 
 
 class AiAnalysisReview(BaseModel):

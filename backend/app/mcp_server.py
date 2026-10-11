@@ -27,7 +27,7 @@ from app.services.access import load_access
 server = MCPServer(
     name="SecretVuln",
     instructions=(
-        "Уязвимости SecretVuln (SARIF). Можно искать и читать уязвимости и записывать "
+        "Уязвимости SecretVuln (SARIF). Можно искать (в том числе по смыслу) и читать уязвимости, находить похожие и записывать "
         "выводы ИИ (submit_analysis). Статус уязвимости агент не меняет — решает человек. "
         + agent_tools.UNTRUSTED_NOTICE
     ),
@@ -84,17 +84,30 @@ async def search_findings(
     order: Literal["last_seen", "severity", "number", "due_at"] = "last_seen",
     limit: int = 50,
     offset: int = 0,
+    query: str | None = None,
 ) -> dict:
     """Найти уязвимости (видны только доступные токену). Фильтры как в списке, лимит 100.
 
     entity_id — проект вместе с подпроектами; no_ai_verdict — ещё без вердикта ИИ.
+    query — поиск по смыслу (текст на любом языке): сортировка по близости, в ответе
+    similarity 0–1. Работает, только если в SecretVuln включены векторы.
     """
     return await _run(ctx, lambda db, p: agent_tools.search_findings(
         db, p,
         entity_id=_uuid(entity_id), severity=severity, statuses=status, scanner=scanner,
         tag=tag, overdue=overdue, ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict,
-        order=order, limit=limit, offset=offset,
+        order=order, limit=limit, offset=offset, query=query,
     ))
+
+
+@server.tool()
+async def find_similar(ctx: Context, finding: str, k: int = 5) -> dict:
+    """Похожие по смыслу уязвимости (до 20) среди доступных токену, с решением человека
+    по каждой (decision: статус, причина, дата). pending=true — вектор ещё считается.
+
+    finding — UUID или номер (`SV-123`).
+    """
+    return await _run(ctx, lambda db, p: agent_tools.find_similar(db, p, finding, k))
 
 
 @server.tool()

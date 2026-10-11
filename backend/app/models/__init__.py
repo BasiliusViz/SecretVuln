@@ -5,6 +5,7 @@ from app.models.base import Base
 from app.models.decision_request import DecisionRequest, DecisionStatus, DecisionType, ReasonTag
 from app.models.entity import Entity, RepoType
 from app.models.finding import Finding, FindingStatus, Severity
+from app.models.finding_embedding import FindingEmbedding
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
 from app.models.import_ import Import, ImportStatus
 from app.models.ownership_rule import OwnershipRule, RuleSource
@@ -26,6 +27,7 @@ __all__ = [
     "Severity",
     "FindingStatus",
     "FindingEvent",
+    "FindingEmbedding",
     "FindingEventType",
     "ActorType",
     "DecisionRequest",

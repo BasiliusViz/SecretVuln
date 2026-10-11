@@ -52,7 +52,7 @@ def _user_text(messages: list[dict]) -> str:
 
 
 def test_prompt_version():
-    assert PROMPT_VERSION == "triage-v1"
+    assert PROMPT_VERSION == "triage-v2"
 
 
 def test_messages_contain_finding_facts():
@@ -142,3 +142,13 @@ def test_answer_schema():
         TriageAnswer.model_validate(ok.model_dump() | {"verdict": "maybe"})
     with pytest.raises(ValidationError):
         TriageAnswer.model_validate(ok.model_dump() | {"confidence": 1.5})
+
+
+def test_prompt_masks_secrets_in_regular_finding():
+    key = "AKIAIOSFODNN7EXAMPLE"
+    raw = _raw(f"client = boto3.client('s3', aws_access_key_id='{key}')")
+    raw["message"] = {"text": f"SQL с ключом {key}"}
+    text = _user_text(build_messages(_finding(raw=raw)))
+    assert key not in text
+    assert "[MASKED]" in text
+    assert "boto3.client" in text

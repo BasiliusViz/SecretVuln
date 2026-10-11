@@ -56,9 +56,22 @@ class Settings(BaseSettings):
     # сколько новых находок одного импорта разбирать автоматически; 0 — автозапуск выключен
     ai_auto_limit: int = 50
 
+    # Эмбеддинги: OpenAI-совместимый /v1/embeddings. Пустая модель — векторы выключены.
+    ai_embed_model: str = ""
+    ai_embed_base_url: str = ""  # пусто — берётся ai_base_url
+    ai_embed_dim: int = 1024  # должна совпадать с колонкой finding_embeddings.embedding
+
     @property
     def ai_enabled(self) -> bool:
         return bool(self.ai_base_url.strip())
+
+    @property
+    def embed_base_url(self) -> str:
+        return (self.ai_embed_base_url or self.ai_base_url).strip()
+
+    @property
+    def embeddings_enabled(self) -> bool:
+        return bool(self.ai_embed_model.strip() and self.embed_base_url)
 
 
 @lru_cache

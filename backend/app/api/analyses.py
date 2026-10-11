@@ -120,4 +120,8 @@ async def request_ai_triage(
 async def ai_status(principal: Principal = Depends(get_current_principal)) -> dict:
     settings = get_settings()
     enabled = settings.ai_enabled
-    return {"enabled": enabled, "model": (settings.ai_model or None) if enabled else None}
+    return {
+        "enabled": enabled,
+        "model": (settings.ai_model or None) if enabled else None,
+        "embeddings_enabled": settings.embeddings_enabled,
+    }

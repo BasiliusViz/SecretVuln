@@ -46,6 +46,7 @@ ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/findings/{finding_id}"): "point",
     ("PATCH", "/api/v1/findings/{finding_id}"): "point",
     ("GET", "/api/v1/findings/{finding_id}/events"): "point",
+    ("GET", "/api/v1/findings/{finding_id}/similar"): "point",
     ("POST", "/api/v1/findings/{finding_id}/assign"): "point",
     ("POST", "/api/v1/findings/{finding_id}/comments"): "point",
     ("POST", "/api/v1/findings/{finding_id}/help"): "point",

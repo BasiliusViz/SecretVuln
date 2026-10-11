@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, ensure, not_found, require_permission
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import (
     AiVerdict,
@@ -48,6 +49,7 @@ from app.services.events import record_event
 from app.services.finding_state import set_status
 from app.services.noisy_rules import noisy_rules
 from app.services.ownership import build_resolver
+from app.services.similarity import find_similar
 
 router = APIRouter(prefix="/api/v1", tags=["findings"])
 
@@ -284,6 +286,20 @@ async def get_finding(
     db: AsyncSession = Depends(get_db),
 ) -> FindingDetail:
     return await to_detail(db, await finding_checked(db, principal, finding_id, "finding:read"))
+
+
+@router.get("/findings/{finding_id}/similar")
+async def similar_findings(
+    finding_id: uuid.UUID,
+    limit: int = Query(5, ge=1, le=20),
+    principal: Principal = Depends(require_permission("finding", "read")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Похожие по смыслу среди видимых вызывающему. `pending` — вектор ещё не посчитан."""
+    if not get_settings().embeddings_enabled:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Векторы выключены")
+    finding = await finding_checked(db, principal, finding_id, "finding:read")
+    return await find_similar(db, principal, finding.id, limit)
 
 
 @router.get("/findings/{finding_id}/events", response_model=list[FindingEventRead])

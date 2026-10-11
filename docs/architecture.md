@@ -90,6 +90,17 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - `repo_url`: учётные данные вырезаются, но их смена видна — `Snapshot` держит в памяти sha256 от userinfo, `diff` добавляет `credentials_changed: ["repo_url"]`.
 - Права ролей (`casbin_rule`) API пишет SQL-ом в транзакции запроса (`authz/policies.py`) — вместе с записью журнала; in-memory enforcer остался для CLI и тестов. `entity.delete` пишет `binding.delete` (с `cascade`) на каждую привязку снесённого поддерева — на родителя, как и само удаление.
 
+## Векторы и «Похожие находки» (этап 8 — бэкенд РЕАЛИЗОВАН)
+
+- pgvector в своём Postgres: образ `pgvector/pgvector:pg16` (≥ 0.8), миграция `0017` — `CREATE EXTENSION vector`, таблица `finding_embeddings` (`finding_id` PK, `model`, `content_hash`, `embedding vector(1024)`, HNSW `vector_cosine_ops`), `ai_analyses.similar_ids` (JSONB).
+- Настройки: `SV_AI_EMBED_MODEL` (пусто — выключено), `SV_AI_EMBED_BASE_URL` (пусто → `SV_AI_BASE_URL`), `SV_AI_EMBED_DIM` (1024, должна совпадать с колонкой). `settings.embeddings_enabled`. Протокол — OpenAI-совместимый `/v1/embeddings` (`LlmClient.embed`, `get_embed_client`).
+- Маскирование (`services/masking.py`) общее для эмбеддингов и промпта: `is_secret_finding` (у секрета — только сканер, правило, CWE, путь), `mask()` — префиксы ключей, присваивания `password=…`, высокоэнтропийные строки (≥ 20 символов, буквы+цифры, энтропия ≥ 4.0).
+- `services/embeddings.py`: `canonical_text` → `content_hash = sha256(модель + текст)`. `embed_pending` берёт находки без вектора, с другой моделью или изменённые после расчёта (`updated_at > created_at`), сверяет хеш, считает пачками по 32. Смена модели — автоматическая переиндексация. `ensure_embedding` — одна находка сразу (триажёр).
+- Воркер: задача `embed_pending` с `_job_id="embed"` (одна за раз), ставится после импорта и cron в :17 каждого часа; ошибка модели — в лог.
+- `services/similarity.py`: `nearest` / `find_similar` — косинус, фильтр прав `Access` в том же запросе, `SET LOCAL hnsw.iterative_scan = relaxed_order` (иначе фильтр обрезает выдачу индекса) + досортировка; исключаются сама находка, тот же `fingerprint` и векторы другой модели. `decision` — последний переход статуса от человека (`finding_events.actor_type=user`). `search_by_text` — поверх `findings_query`.
+- API: `GET /findings/{id}/similar?limit=1..20` (`finding:read`, невидимая → 404, выключено → 503, нет вектора → `pending`), `/ai/status.embeddings_enabled`. MCP: `find_similar(finding, k)`, `search_findings(query=…)` (+ `similarity`).
+- Триажёр `triage-v2`: до 3 похожих в `false_positive/confirmed/risk_accepted`, где текущий статус поставил человек, **только из того же корневого проекта**; в промпте внутри границы недоверенных данных, замаскированы; id — в `similar_ids` обеих строк.
+
 ## Локализация и дизайн (см. frontend/DESIGN.md)
 
 Продукт для русскоязычного рынка: **весь UI на русском** (react-i18next, плюрализация «находка/находки/находок», даты DD.MM.YYYY, локаль ru-RU). Код, API, enum-значения в БД — на английском, перевод только на фронтенде; словарь терминов и таблица переводов enum'ов — в frontend/DESIGN.md.

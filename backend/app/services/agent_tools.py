@@ -28,7 +28,10 @@ from app.api.findings import (
 from app.models import AiAnalysis, AiVerdict, Entity, Finding, FindingStatus, Severity
 from app.schemas.ai_analysis import AiAnalysisCreate, AiAnalysisRead
 from app.services.ai_analyses import create_analysis, list_analyses
+from app.services import similarity
+from app.services.embeddings import embed_client
 from app.services.entity_settings import effective_settings
+from app.services.llm import LlmError
 
 SEARCH_LIMIT = 100
 _UNTRUSTED_MAX = 4000
@@ -97,7 +100,9 @@ async def search_findings(
     order: str = "last_seen",
     limit: int = 50,
     offset: int = 0,
+    query: str | None = None,
 ) -> dict[str, Any]:
+    client = _embed_client_or_error() if query and query.strip() else None
     q = await findings_query(
         db, principal,
         entity_id=entity_id, include_descendants=include_descendants, severity=severity,
@@ -105,11 +110,43 @@ async def search_findings(
         ai_verdicts=ai_verdicts, no_ai_verdict=no_ai_verdict, order=order,
     )
     limit = max(1, min(limit, SEARCH_LIMIT))
-    rows = await db.scalars(q.offset(max(offset, 0)).limit(limit))
-    return {
-        "notice": UNTRUSTED_NOTICE,
-        "findings": [_brief(f) for f in rows],
-    }
+    if client is not None:
+        # поиск по смыслу: те же права и фильтры, сортировка — по близости к запросу
+        try:
+            pairs = await similarity.search_by_text(
+                db, q, query, client, limit=limit, offset=max(offset, 0)
+            )
+        except LlmError as exc:
+            raise HTTPException(503, f"Модель эмбеддингов недоступна: {exc}") from None
+        findings = [_brief(f) | {"similarity": sim} for f, sim in pairs]
+    else:
+        rows = await db.scalars(q.offset(max(offset, 0)).limit(limit))
+        findings = [_brief(f) for f in rows]
+    return {"notice": UNTRUSTED_NOTICE, "findings": findings}
+
+
+def _embed_client_or_error():
+    client = embed_client()
+    if client is None:
+        raise HTTPException(
+            400, "Поиск по смыслу недоступен: векторы выключены (не задана SV_AI_EMBED_MODEL)"
+        )
+    return client
+
+
+async def find_similar(
+    db: AsyncSession, principal: Principal, ref: str, k: int = 5
+) -> dict[str, Any]:
+    """Похожие на находку среди видимых токену; decision — последнее решение человека."""
+    _embed_client_or_error()
+    finding_id = await _resolve_finding_id(db, ref)
+    finding = await finding_checked(db, principal, finding_id, "finding:read")
+    result = await similarity.find_similar(db, principal, finding.id, max(1, min(k, 20)))
+    items = []
+    for item in result["items"]:
+        title = item.pop("title")
+        items.append(item | {"untrusted": {"title": _cut(title)}})
+    return {"notice": UNTRUSTED_NOTICE, "pending": result["pending"], "items": items}
 
 
 async def _resolve_finding_id(db: AsyncSession, ref: str) -> uuid.UUID:

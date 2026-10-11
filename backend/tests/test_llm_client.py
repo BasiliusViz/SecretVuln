@@ -132,3 +132,89 @@ def test_ai_enabled_depends_on_base_url():
     assert Settings(_env_file=None, ai_base_url="http://llm.local/v1").ai_enabled is True
     s = Settings(_env_file=None)
     assert s.ai_timeout == 60 and s.ai_auto_limit == 50
+
+
+# --- эмбеддинги -----------------------------------------------------------------------
+
+
+def _embed_client(handler, dim: int = 3) -> LlmClient:
+    return LlmClient(
+        base_url="http://llm.local/v1/", model="bge", api_key="k", timeout=5,
+        transport=httpx.MockTransport(handler), dim=dim,
+    )
+
+
+def _vectors(data: list[list[float]]) -> dict:
+    # индексы в обратном порядке: клиент обязан упорядочить по index
+    items = [{"object": "embedding", "index": i, "embedding": v} for i, v in enumerate(data)]
+    return {"object": "list", "data": list(reversed(items))}
+
+
+async def test_embed_sends_batch_and_orders_by_index():
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "http://llm.local/v1/embeddings"
+        assert request.headers["authorization"] == "Bearer k"
+        body = json.loads(request.content)
+        seen.append(body)
+        return httpx.Response(200, json=_vectors([[float(i)] * 3 for i in range(len(body["input"]))]))
+
+    out = await _embed_client(handler).embed(["a", "b", "c"])
+    assert out == [[0.0] * 3, [1.0] * 3, [2.0] * 3]
+    assert seen == [{"model": "bge", "input": ["a", "b", "c"]}]
+
+
+async def test_embed_empty_input_makes_no_request():
+    def handler(request):  # pragma: no cover
+        raise AssertionError("не должно быть запроса")
+
+    assert await _embed_client(handler).embed([]) == []
+
+
+@pytest.mark.parametrize("data", [
+    [[1.0, 2.0, 3.0]],  # векторов меньше, чем текстов
+    [[1.0, 2.0], [1.0, 2.0]],  # неверная размерность
+])
+async def test_embed_validates_shape(data):
+    def handler(request):
+        return httpx.Response(200, json=_vectors(data))
+
+    with pytest.raises(LlmError):
+        await _embed_client(handler).embed(["a", "b"])
+
+
+@pytest.mark.parametrize("response", [
+    httpx.Response(500, text="boom"),
+    httpx.Response(200, text="not json"),
+    httpx.Response(200, json={"data": [{"index": 0}]}),
+])
+async def test_embed_errors(response):
+    with pytest.raises(LlmError):
+        await _embed_client(lambda r: response).embed(["a"])
+
+
+async def test_embed_network_error():
+    def handler(request):
+        raise httpx.ConnectError("down")
+
+    with pytest.raises(LlmError):
+        await _embed_client(handler).embed(["a"])
+
+
+def test_get_embed_client_from_settings(monkeypatch):
+    from app.services.llm import client as client_mod
+
+    s = Settings(ai_base_url="http://chat/v1", ai_embed_model="bge-m3", ai_embed_dim=8)
+    monkeypatch.setattr(client_mod, "get_settings", lambda: s)
+    assert s.embeddings_enabled
+    c = client_mod.get_embed_client()
+    assert (c.base_url, c.model, c.dim) == ("http://chat/v1", "bge-m3", 8)
+
+    s = Settings(ai_base_url="http://chat/v1", ai_embed_base_url="http://emb/v1",
+                 ai_embed_model="bge-m3")
+    monkeypatch.setattr(client_mod, "get_settings", lambda: s)
+    assert client_mod.get_embed_client().base_url == "http://emb/v1"
+
+    assert not Settings(ai_base_url="http://chat/v1").embeddings_enabled
+    assert not Settings(ai_embed_model="bge-m3").embeddings_enabled

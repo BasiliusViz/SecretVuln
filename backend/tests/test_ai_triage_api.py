@@ -118,11 +118,11 @@ async def test_status(client, developer, ai_on, monkeypatch):
     _, headers = developer
     r = await client.get("/api/v1/ai/status", headers=headers)
     assert r.status_code == 200
-    assert r.json() == {"enabled": True, "model": "fake-model"}
+    assert r.json() == {"enabled": True, "model": "fake-model", "embeddings_enabled": False}
 
     monkeypatch.setattr(ai_on, "ai_base_url", "")
     r = await client.get("/api/v1/ai/status", headers=headers)
-    assert r.json() == {"enabled": False, "model": None}
+    assert r.json() == {"enabled": False, "model": None, "embeddings_enabled": False}
 
 
 async def test_status_requires_login(client):

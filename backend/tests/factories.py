@@ -109,3 +109,33 @@ async def make_policy(
     await db.commit()
     await db.refresh(policy)
     return policy
+
+
+class FakeEmbedClient:
+    """Детерминированные эмбеддинги без модели: мешок слов, свёрнутый в 1024 измерения.
+    Тексты с общими словами — близкие векторы, так что порядок похожих осмыслен."""
+
+    def __init__(self, model: str = "fake-embed", dim: int = 1024, error: bool = False):
+        self.model = model
+        self.dim = dim
+        self.error = error
+        self.calls: list[list[str]] = []
+
+    def vector(self, text: str) -> list[float]:
+        import hashlib
+        import math
+        import re
+
+        v = [0.0] * self.dim
+        for word in re.findall(r"\w+", text.lower()):
+            v[int(hashlib.md5(word.encode()).hexdigest(), 16) % self.dim] += 1.0
+        norm = math.sqrt(sum(x * x for x in v)) or 1.0
+        return [x / norm for x in v]
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        from app.services.llm import LlmError
+
+        self.calls.append(list(texts))
+        if self.error:
+            raise LlmError("модель эмбеддингов недоступна")
+        return [self.vector(t) for t in texts]

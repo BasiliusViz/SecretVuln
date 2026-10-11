@@ -233,3 +233,18 @@ async def two_teams(db, make_user, grant, builtin_policies):
     return SimpleNamespace(
         a=a, a_svc=a_svc, b=b, b_svc=b_svc, lead_a=lead_a, lead_b=lead_b, dev_a=dev_a
     )
+
+
+@pytest.fixture
+def embeddings_on(monkeypatch):
+    """Векторы включены, модель — детерминированная заглушка (tests/factories.py)."""
+    from app.core.config import get_settings
+    from app.services.llm import client as llm_client
+    from tests.factories import FakeEmbedClient
+
+    s = get_settings()
+    monkeypatch.setattr(s, "ai_embed_model", "fake-embed")
+    monkeypatch.setattr(s, "ai_embed_base_url", "http://embed.local/v1")
+    fake = FakeEmbedClient()
+    monkeypatch.setattr(llm_client, "get_embed_client", lambda: fake)
+    return fake
