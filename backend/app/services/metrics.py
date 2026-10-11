@@ -12,7 +12,9 @@
 - ai_agreement — процент (0–100) согласия людей с вердиктами ИИ по выводам «triage»
   за период (по created_at вывода); в строке ещё `count` — сколько выводов учтено.
   Явное согласие — вывод принят/отклонён; иначе неявное — по итоговому статусу находки.
-  `uncertain` и находки без решения (new/triaged) не учитываются.
+  `uncertain` и находки без решения (new/triaged) не учитываются. От каждого агента по
+  находке учитывается только последний вывод (повторный разбор не умножает голос), а
+  «исправлено» подтверждает вердикт, только если так закрыл человек, а не автозакрытие.
 
 resolved и mttr_days считаются по истории (`finding_events`: переход из открытого
 статуса в закрытый), а не по `resolved_at`: переоткрытие обнуляет `resolved_at`,
@@ -26,12 +28,14 @@ from __future__ import annotations
 import enum
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Float, and_, case, cast, func, literal, select
+from sqlalchemy import Float, and_, case, cast, func, literal, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiAnalysis, AiAnalysisKind, Entity, Finding, FindingEvent, UserGroup
 from app.models.ai_analysis import AiReviewStatus, AiVerdict
 from app.models.finding import CLOSED_STATUSES, OPEN_STATUSES, FindingStatus
+from app.models.finding_event import FindingEventType
 from app.schemas.metrics import MetricQuery, MetricRow
 from app.services.entity_paths import subtree_ids
 from app.services.entity_tree import entities_with_tag
@@ -64,13 +68,36 @@ GROUP_COLUMN = {
 }
 
 # Статусы, которыми человек подтвердил, что уязвимость настоящая
-_CONFIRMED = (
-    FindingStatus.confirmed, FindingStatus.in_progress, FindingStatus.fixed,
-    FindingStatus.risk_accepted,
-)
+_CONFIRMED = (FindingStatus.confirmed, FindingStatus.in_progress, FindingStatus.risk_accepted)
 _FP, _TP = AiVerdict.false_positive, AiVerdict.true_positive
 _IS_FP = Finding.status == FindingStatus.false_positive
-_IS_CONFIRMED = Finding.status.in_(_CONFIRMED)
+# «исправлено» автозакрытием (находка пропала из скана) — не решение человека;
+# смотрим последнее закрытие в fixed: прошлое ручное могло быть до переоткрытия
+_FIXED_BY_HUMAN = and_(
+    Finding.status == FindingStatus.fixed,
+    select(FindingEvent.event_type)
+    .where(FindingEvent.finding_id == Finding.id, FindingEvent.to_status == FindingStatus.fixed)
+    .order_by(FindingEvent.created_at.desc(), FindingEvent.id.desc())
+    .limit(1)
+    .correlate(Finding)
+    .scalar_subquery()
+    != FindingEventType.auto_fixed,
+)
+_IS_CONFIRMED = or_(Finding.status.in_(_CONFIRMED), _FIXED_BY_HUMAN)
+_Later = aliased(AiAnalysis)
+# Последний вывод «triage» этого агента по находке
+_IS_LATEST = AiAnalysis.id == (
+    select(_Later.id)
+    .where(
+        _Later.finding_id == AiAnalysis.finding_id,
+        _Later.agent.is_not_distinct_from(AiAnalysis.agent),
+        _Later.kind == AiAnalysisKind.triage,
+    )
+    .order_by(_Later.created_at.desc(), _Later.id.desc())
+    .limit(1)
+    .correlate(AiAnalysis)
+    .scalar_subquery()
+)
 # 1 — согласие, 0 — несогласие, NULL — вывод не учитывается
 AGREEMENT = case(
     (AiAnalysis.review_status == AiReviewStatus.accepted, 1),
@@ -120,6 +147,7 @@ def _metric_conditions(metric: str, now: datetime) -> list:
         return [
             AiAnalysis.kind == AiAnalysisKind.triage,
             AiAnalysis.verdict.in_([_TP, _FP]),
+            _IS_LATEST,
             AGREEMENT.is_not(None),
         ]
     return []

@@ -26,13 +26,14 @@
   `{title_plain, explanation, remediation, verdict: true_positive|false_positive|uncertain, confidence: 0..1, reasoning}`.
   Вход: правило (id, имя, описание), сообщение, сканер, severity, CWE, файл и строка, фрагмент кода из `raw` (обрезка по длине). **Для находок-секретов фрагмент не передаётся** (маскирование — этап 8). Тексты ответа — на русском.
 - **Триажёр** `services/builtin_triage.py`: `triage_finding(db, finding_id)` — собрать вход, вызвать модель, записать две строки `ai_analyses` (`summary` и `triage`), `agent="sv-builtin"`, `model=SV_AI_MODEL`, `prompt_version`, `created_by=NULL`; вердикт находки обновляет существующий `refresh_ai_verdict`.
-- **Воркер**: задача `ai_triage_finding(finding_id)`, `_job_id = "ai:{finding_id}"`. В конце `process_import`, если ИИ включён и импорт из основной ветки, — ставим в очередь новые находки (до `SV_AI_AUTO_LIMIT`), пропуская находки, у которых уже есть вывод `sv-builtin`. Ошибка модели — в лог, импорт не падает, строк не пишем.
+- **Воркер**: задача `ai_triage_finding(finding_id)`, `_job_id = "ai:{finding_id}"` и `keep_result=0` (и для автозапуска, и для кнопки: пока разбор в очереди, дубль отбрасывается, после — повтор можно). Одновременно идёт не больше одного разбора; остальные откладываются `Retry` и слоты импортов не занимают. Таймаут задачи — `2 × SV_AI_TIMEOUT + 60`. В конце `process_import`, если ИИ включён и импорт из основной ветки, — ставим в очередь новые находки (до `SV_AI_AUTO_LIMIT`), пропуская находки, у которых уже есть вывод `sv-builtin`. Ошибка модели — в лог, импорт не падает, строк не пишем.
 - **API**:
-  - `POST /api/v1/findings/{id}/ai-triage` → 202; право `finding:analyze`; невидимая находка → 404; ИИ выключен → 503. Ставит в очередь всегда (повторный разбор). Пишет аудит.
+  - `POST /api/v1/findings/{id}/ai-triage` → 202; право `finding:triage` (решение на ревью: `finding:analyze` — это запись выводов с любым вердиктом, его оставляем агентам); невидимая находка → 404; ИИ выключен или очередь недоступна → 503. Сначала очередь, потом аудит.
   - `GET /api/v1/ai/status` → `{enabled, model}` (любой вошедший пользователь).
 - **Метрика `ai_agreement`** в `POST /metrics/aggregate`: по выводам `kind=triage` с вердиктом `true_positive`/`false_positive` (`uncertain` не учитывается), период — по `created_at` вывода.
   - Явное: `review_status=accepted` → согласие, `rejected` → несогласие.
-  - Неявное (если `pending`): статус находки `false_positive` → согласие при вердикте `false_positive`; `confirmed`/`in_progress`/`fixed`/`risk_accepted` → согласие при `true_positive`; `new`/`triaged` — не учитываются.
+  - Неявное (если `pending`): статус находки `false_positive` → согласие при вердикте `false_positive`; `confirmed`/`in_progress`/`risk_accepted`, а также `fixed`, если так закрыл человек (не автозакрытие), → согласие при `true_positive`; `new`/`triaged` — не учитываются.
+  - От каждого агента по находке учитывается только последний вывод «triage» — повторный разбор не умножает голос.
   - Значение — процент согласия; `count` — число учтённых выводов. Новые разрезы `ai_agent`, `ai_model` (вместе с существующими).
 
 ## Фронтенд (отдельная сессия)

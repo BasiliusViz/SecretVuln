@@ -89,7 +89,7 @@ export function FindingWindow() {
   const entityId = finding?.entity_id ?? null;
   const canTriage = can("finding:triage", entityPath);
   const canApprove = can("finding:approve", entityPath);
-  const canAnalyze = aiEnabled && can("finding:analyze", entityPath);
+  const canAnalyze = aiEnabled && canTriage;
   const canAssign = canTriage && can("group:read");
   useEffect(() => {
     if (!canAssign || !entityId) return;

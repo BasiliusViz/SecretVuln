@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import traceback
 import uuid
 from datetime import datetime, timezone
 
-from arq import create_pool, cron
+from arq import Retry, create_pool, cron
 from arq.connections import ArqRedis, RedisSettings
+from arq.worker import func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
@@ -21,6 +23,20 @@ from app.services.storage import load_sarif
 from app.services.sarif import parse_sarif
 
 logger = logging.getLogger("arq.worker")
+
+# Разбор ИИ делит слоты воркера с импортами: одновременно идёт не больше одного,
+# остальные откладываются (Retry) и слот не держат — импорты не ждут за моделью.
+# Семафор — на процесс: при нескольких процессах arq разборов будет по одному на каждый.
+# Очередь дольше ~4 часов (AI_MAX_TRIES × AI_RETRY_DEFER) хвост снимет с «max retries».
+AI_CONCURRENCY = 1
+AI_RETRY_DEFER = 15
+AI_MAX_TRIES = 1000  # ~4 часа ожидания очереди по 15 с
+_ai_slots = asyncio.Semaphore(AI_CONCURRENCY)
+
+
+def ai_job_id(finding_id) -> str:
+    """Один разбор находки в очереди: дубль, пока прошлый не закончен, ARQ отбросит."""
+    return f"ai:{finding_id}"
 
 
 async def _mark_failed(session_factory: async_sessionmaker, import_id: str, error: str) -> None:
@@ -73,7 +89,7 @@ async def enqueue_auto_triage(ctx: dict, db: AsyncSession, import_id: uuid.UUID)
         ids = await builtin_triage.pick_auto_triage(db, import_id)
         for finding_id in ids:
             await ctx["redis"].enqueue_job(
-                "ai_triage_finding", str(finding_id), _job_id=f"ai:{finding_id}"
+                "ai_triage_finding", str(finding_id), _job_id=ai_job_id(finding_id)
             )
         if ids:
             logger.info("Import %s: %d findings queued for AI triage", import_id, len(ids))
@@ -85,8 +101,10 @@ async def ai_triage_finding(ctx: dict, finding_id: str) -> None:
     if not get_settings().ai_enabled:
         logger.info("AI triage of %s skipped: built-in AI is off", finding_id)
         return
+    if _ai_slots.locked():
+        raise Retry(defer=AI_RETRY_DEFER)
     session_factory: async_sessionmaker = ctx["session_factory"]
-    async with session_factory() as db:
+    async with _ai_slots, session_factory() as db:
         try:
             rows = await builtin_triage.triage_with_settings(db, uuid.UUID(finding_id))
             await db.commit()
@@ -117,7 +135,17 @@ async def shutdown(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [process_import, ai_triage_finding]
+    functions = [
+        process_import,
+        # keep_result=0: после разбора повтор той же находки снова можно поставить в очередь;
+        # таймаут — на два вызова модели (ответ + повтор с подсказкой об ошибке)
+        func(
+            ai_triage_finding,
+            keep_result=0,
+            max_tries=AI_MAX_TRIES,
+            timeout=2 * get_settings().ai_timeout + 60,
+        ),
+    ]
     cron_jobs = [cron(expire_risks, hour={3}, minute={0})]
     on_startup = startup
     on_shutdown = shutdown
@@ -137,10 +165,12 @@ async def enqueue_import(import_id: str) -> None:
     await _pool.enqueue_job("process_import", import_id)
 
 
-async def enqueue_ai_triage(finding_id: str) -> None:
-    """Ручной запуск разбора: без `_job_id`, чтобы повторный разбор не отбрасывался."""
+async def enqueue_ai_triage(finding_id: str) -> bool:
+    """Ручной запуск разбора. Пока разбор находки в очереди или идёт, повтор отбрасывается;
+    после окончания (`keep_result=0`) — снова можно. False — дубль, уже в очереди."""
     global _pool
     if _pool is None:
         settings = get_settings()
         _pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    await _pool.enqueue_job("ai_triage_finding", finding_id)
+    job = await _pool.enqueue_job("ai_triage_finding", finding_id, _job_id=ai_job_id(finding_id))
+    return job is not None

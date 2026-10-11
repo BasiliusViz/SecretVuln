@@ -14,8 +14,9 @@ from tests.factories import make_entity, make_finding
 def queued(monkeypatch) -> list[str]:
     calls: list[str] = []
 
-    async def _fake(finding_id: str) -> None:
+    async def _fake(finding_id: str) -> bool:
         calls.append(finding_id)
+        return True
 
     monkeypatch.setattr("app.worker.enqueue_ai_triage", _fake)
     return calls
@@ -57,9 +58,16 @@ async def test_trigger_disabled_is_503(client, db, admin, ai_on, queued, monkeyp
     assert queued == []
 
 
-async def test_trigger_needs_analyze(client, db, developer, ai_on, queued):
-    _, headers = developer  # «Разработчик» без finding:analyze
-    finding = await make_finding(db, await make_entity(db))
+async def test_trigger_needs_triage(client, db, make_user, grant, ai_on, queued):
+    entity = await make_entity(db)
+    finding = await make_finding(db, entity)
+    viewer, headers = await make_user("viewer@test.local")
+    await grant(viewer, "Наблюдатель", entity)  # без finding:triage
+    agent, agent_headers = await make_user("agent@test.local")
+    await grant(agent, "ИИ-агент", entity)  # finding:analyze — запись выводов, не запуск
+
+    r = await client.post(f"/api/v1/findings/{finding.id}/ai-triage", headers=agent_headers)
+    assert r.status_code == 403
 
     r = await client.post(f"/api/v1/findings/{finding.id}/ai-triage", headers=headers)
     assert r.status_code == 403
@@ -69,7 +77,7 @@ async def test_trigger_needs_analyze(client, db, developer, ai_on, queued):
 async def test_trigger_foreign_finding_is_404(client, db, make_user, grant, two_teams, ai_on,
                                               queued):
     user, headers = await make_user("analyst@test.local")
-    await grant(user, "ИИ-агент", two_teams.a)
+    await grant(user, "Разработчик", two_teams.a)
     mine = await make_finding(db, two_teams.a_svc, fingerprint="m")
     foreign = await make_finding(db, two_teams.b_svc, fingerprint="f")
 
@@ -78,6 +86,32 @@ async def test_trigger_foreign_finding_is_404(client, db, make_user, grant, two_
     r = await client.post(f"/api/v1/findings/{mine.id}/ai-triage", headers=headers)
     assert r.status_code == 202
     assert queued == [str(mine.id)]
+
+
+async def test_trigger_duplicate_not_audited(client, db, admin, ai_on, monkeypatch):
+    async def _dup(finding_id: str) -> bool:
+        return False  # разбор этой находки уже в очереди
+
+    monkeypatch.setattr("app.worker.enqueue_ai_triage", _dup)
+    _, headers = admin
+    finding = await make_finding(db, await make_entity(db))
+
+    r = await client.post(f"/api/v1/findings/{finding.id}/ai-triage", headers=headers)
+    assert r.status_code == 202 and r.json() == {"queued": False}
+    assert not list(await db.scalars(select(AuditLog).where(AuditLog.action == "ai_triage.request")))
+
+
+async def test_trigger_queue_down_is_503_without_audit(client, db, admin, ai_on, monkeypatch):
+    async def _down(finding_id: str) -> None:
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr("app.worker.enqueue_ai_triage", _down)
+    _, headers = admin
+    finding = await make_finding(db, await make_entity(db))
+
+    r = await client.post(f"/api/v1/findings/{finding.id}/ai-triage", headers=headers)
+    assert r.status_code == 503
+    assert not list(await db.scalars(select(AuditLog).where(AuditLog.action == "ai_triage.request")))
 
 
 async def test_status(client, developer, ai_on, monkeypatch):

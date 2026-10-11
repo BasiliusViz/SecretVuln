@@ -38,12 +38,15 @@ async def triage_finding(
 ) -> list[AiAnalysis]:
     """Разобрать находку. Ошибка модели (`LlmError`) пробрасывается — строк не пишем.
 
-    Не коммитит. Модель вызывается без блокировки находки: ответ может идти минуту.
+    Строки вывода не коммитит. Модель вызывается без блокировки находки и вне транзакции:
+    ответ может идти минуту, соединение всё это время не висит «idle in transaction».
     """
     finding = await db.get(Finding, finding_id)
     if finding is None:
         return []
-    answer = await client.chat_json(build_messages(finding), TriageAnswer)
+    messages = build_messages(finding)
+    await db.commit()  # пока только читали — закрываем транзакцию на время ответа модели
+    answer = await client.chat_json(messages, TriageAnswer)
 
     if await _lock_finding(db, finding_id) is None:  # находку удалили, пока думала модель
         return []
@@ -91,7 +94,9 @@ async def pick_auto_triage(db: AsyncSession, import_id: uuid.UUID) -> list[uuid.
     if imp is None or imp.status != ImportStatus.done:
         return []
     already = exists().where(
-        AiAnalysis.finding_id == Finding.id, AiAnalysis.agent == BUILTIN_AGENT
+        AiAnalysis.finding_id == Finding.id,
+        AiAnalysis.agent == BUILTIN_AGENT,
+        AiAnalysis.created_by.is_(None),
     )
     rows = await db.scalars(
         select(Finding.id)

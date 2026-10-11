@@ -1,11 +1,15 @@
 """Выводы ИИ: читать — `finding:read`, писать — `finding:analyze`, рассматривать — `finding:triage`.
 
+Запуск встроенного ИИ — тоже `finding:triage`: это право разбирающих людей, а
+`finding:analyze` (запись выводов с любым вердиктом) остаётся агентам.
+
 Принятие вывода статус находки не меняет: человек меняет его обычным путём,
 передав `ai_analysis_id` — ссылка остаётся в событии истории.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -27,6 +31,7 @@ from app.services.ai_analyses import (
 from app.services import audit
 
 router = APIRouter(prefix="/api/v1", tags=["ai-analyses"])
+logger = logging.getLogger(__name__)
 
 
 async def _reload(db: AsyncSession, analysis_id: uuid.UUID) -> AiAnalysis:
@@ -85,13 +90,22 @@ async def review(
 async def request_ai_triage(
     finding_id: uuid.UUID,
     request: Request,
-    principal: Principal = Depends(require_permission("finding", "analyze")),
+    principal: Principal = Depends(require_permission("finding", "triage")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Разбор встроенным ИИ — в очередь, всегда (повторный разбор тоже)."""
-    finding = await finding_checked(db, principal, finding_id, "finding:analyze")
+    """Разбор встроенным ИИ — в очередь (повторный тоже; пока разбор в очереди, дубль отбрасывается)."""
+    finding = await finding_checked(db, principal, finding_id, "finding:triage")
     if not get_settings().ai_enabled:
         raise HTTPException(503, "Встроенный ИИ не настроен")
+    from app.worker import enqueue_ai_triage
+
+    try:
+        queued = await enqueue_ai_triage(str(finding.id))
+    except Exception:  # Redis недоступен — в журнал не пишем: разбора не было
+        logger.exception("AI triage enqueue failed for %s", finding.id)
+        raise HTTPException(503, "Очередь задач недоступна, попробуйте позже")
+    if not queued:  # разбор этой находки уже в очереди — новый запуск не состоялся
+        return {"queued": False}
     entity = await db.get(Entity, finding.entity_id)
     audit.record_audit(
         db, principal.user, audit.AI_TRIAGE_REQUEST,
@@ -99,9 +113,6 @@ async def request_ai_triage(
         entity=entity, ip=audit.client_ip(request),
     )
     await db.commit()
-    from app.worker import enqueue_ai_triage
-
-    await enqueue_ai_triage(str(finding.id))
     return {"queued": True}
 
 

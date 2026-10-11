@@ -215,3 +215,34 @@ async def test_worker_job_swallows_model_error(db, ai_on, monkeypatch):
     monkeypatch.setattr(builtin_triage, "client_from_settings", lambda: FakeClient())
     await worker.ai_triage_finding({"session_factory": factory}, str(finding.id))
     assert len(list(await db.scalars(select(AiAnalysis.id)))) == 2
+
+async def test_worker_defers_when_ai_slot_busy(ai_on):
+    from arq import Retry
+
+    from app import worker
+
+    async with worker._ai_slots:  # другой разбор уже идёт — слот воркера не держим
+        with pytest.raises(Retry):
+            await worker.ai_triage_finding({}, "00000000-0000-0000-0000-000000000000")
+
+
+async def test_worker_auto_enqueue_failure_is_swallowed(db, ai_on):
+    entity = await make_entity(db)
+    imp = await _imported(db, entity, ["a"])
+
+    class Redis:
+        async def enqueue_job(self, *args, **kwargs):
+            raise ConnectionError("redis down")
+
+    from app import worker
+
+    await worker.enqueue_auto_triage({"redis": Redis()}, db, imp.id)  # не падает
+
+
+def test_builtin_agent_name_is_reserved():
+    from pydantic import ValidationError
+
+    from app.schemas.ai_analysis import AiAnalysisCreate
+
+    with pytest.raises(ValidationError):
+        AiAnalysisCreate(kind=AiAnalysisKind.summary, explanation="x", agent=" SV-Builtin ")

@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from app.models import AiAnalysis, AiAnalysisKind
+from sqlalchemy import select
+
+from app.models import AiAnalysis, AiAnalysisKind, FindingEvent
 from app.models.ai_analysis import AiReviewStatus, AiVerdict
 from app.models.finding import FindingStatus, Severity
+from app.models.finding_event import FindingEventType
+from app.services.events import record_event
 from tests.factories import make_entity, make_finding
 
 URL = "/api/v1/metrics/aggregate"
@@ -17,13 +21,20 @@ S = FindingStatus
 
 async def _case(db, entity, fp, status, verdict, review=AiReviewStatus.pending, *,
                 agent="sv-builtin", model="m1", kind=AiAnalysisKind.triage, at=None,
-                severity=Severity.high):
+                severity=Severity.high, auto_fixed=False):
     finding = await make_finding(db, entity, fp, status=status, severity=severity)
+    if status == S.fixed:  # «исправлено» человеком — или автозакрытием при импорте
+        record_event(
+            db, finding.id,
+            FindingEventType.auto_fixed if auto_fixed else FindingEventType.status_changed,
+            from_status=S.confirmed, to_status=S.fixed,
+        )
     db.add(AiAnalysis(
         finding_id=finding.id, kind=kind, verdict=verdict, review_status=review,
         agent=agent, model=model, created_at=at or NOW - timedelta(days=1),
     ))
     await db.flush()
+    return finding
 
 
 async def _q(client, headers, **body):
@@ -54,6 +65,42 @@ async def test_explicit_and_implicit_agreement(client, developer, db):
     [row] = await _q(client, developer[1], period="30d")
     assert row["count"] == 7
     assert row["value"] == round(4 / 7 * 100, 4)
+
+
+async def test_autofixed_is_not_a_human_decision(client, developer, db):
+    e = await make_entity(db)
+    await _case(db, e, "human", S.fixed, TP)  # согласие
+    await _case(db, e, "auto", S.fixed, FP, auto_fixed=True)  # не учитывается
+    # закрыл человек, скан переоткрыл, потом автозакрытие — решает последнее закрытие
+    f = await _case(db, e, "reopened", S.fixed, FP, auto_fixed=True)
+    record_event(db, f.id, FindingEventType.status_changed, from_status=S.confirmed,
+                 to_status=S.fixed)
+    await db.flush()
+    for ev in (await db.scalars(select(FindingEvent).where(FindingEvent.finding_id == f.id))):
+        ev.created_at = NOW - timedelta(days=5 if ev.event_type == FindingEventType.status_changed else 1)
+    await db.commit()
+
+    [row] = await _q(client, developer[1])
+    assert row["count"] == 1 and row["value"] == 100.0
+
+
+async def test_only_latest_verdict_per_agent(client, developer, db):
+    e = await make_entity(db)
+    f = await _case(db, e, "x", S.false_positive, TP, at=NOW - timedelta(days=3))
+    # повторные разборы той же находки: голос — только у последнего вывода агента
+    for days, verdict in ((2, TP), (1, FP)):
+        db.add(AiAnalysis(finding_id=f.id, kind=AiAnalysisKind.triage, verdict=verdict,
+                          review_status=AiReviewStatus.pending, agent="sv-builtin", model="m1",
+                          created_at=NOW - timedelta(days=days)))
+    # другой агент по той же находке — свой голос
+    db.add(AiAnalysis(finding_id=f.id, kind=AiAnalysisKind.triage, verdict=TP,
+                      review_status=AiReviewStatus.pending, agent="claude-code",
+                      created_at=NOW - timedelta(days=1)))
+    await db.commit()
+
+    by_agent = {r["key"]: (r["value"], r["count"]) for r in
+                await _q(client, developer[1], group_by="ai_agent")}
+    assert by_agent == {"sv-builtin": (100.0, 1), "claude-code": (0.0, 1)}
 
 
 async def test_empty(client, developer, db):

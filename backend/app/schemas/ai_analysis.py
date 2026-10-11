@@ -21,6 +21,9 @@ class AiAnalysisCreate(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "AiAnalysisCreate":
+        # имя встроенного ИИ занято: иначе внешний вывод выдавал бы себя за него
+        if self.agent and self.agent.strip().lower() == "sv-builtin":
+            raise ValueError("Имя агента «sv-builtin» зарезервировано за встроенным ИИ")
         if self.kind == AiAnalysisKind.triage and self.verdict is None:
             raise ValueError("Для вывода «triage» нужен вердикт (verdict)")
         if self.kind == AiAnalysisKind.summary and self.verdict is not None:
