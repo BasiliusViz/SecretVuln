@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import type { Severity } from "../theme/severity";
 
-const ICONS: Record<Severity, string> = {
+export const SEVERITY_ICONS: Record<Severity, string> = {
   critical: "▲",
   high: "▲",
   medium: "●",
@@ -27,7 +27,7 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
       }}
     >
       <span aria-hidden="true" style={{ fontSize: 9 }}>
-        {ICONS[severity]}
+        {SEVERITY_ICONS[severity]}
       </span>
       {t(`severity.${severity}`)}
     </span>

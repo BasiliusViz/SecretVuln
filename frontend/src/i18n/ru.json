@@ -235,6 +235,21 @@
       "aiAgreement_few": "по {{count}} рассмотренным выводам за {{period}}",
       "aiAgreement_many": "по {{count}} рассмотренным выводам за {{period}}"
     },
+    "insights": {
+      "openUp": "Бэклог растёт",
+      "openDown": "Бэклог сокращается",
+      "openFlat": "Бэклог не меняется",
+      "overdueSome": "Требуют внимания",
+      "overdueNone": "Просрочек нет",
+      "slaAll": "Все в срок",
+      "slaSome": "Есть просроченные",
+      "period": "За {{period}}"
+    },
+    "badges": {
+      "delta": "Появилось минус закрыто за {{period}}",
+      "overdue": "срок истёк"
+    },
+    "bySeverity": "По критичности",
     "noData": "Нет данных",
     "weekly": "Появились и закрыты по неделям",
     "weekOf": "Неделя с {{date}}",
