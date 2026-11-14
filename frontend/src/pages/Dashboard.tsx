@@ -207,23 +207,28 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState(false);
-  const [stats, setStats] = useState<Stats | null>(null);
+  // null — идёт загрузка, "error" — запрос упал (не путать с пустым результатом)
+  const [stats, setStats] = useState<Stats | null | "error">(null);
   const severityColors = useSeverityColors();
   const [period, setPeriod] = useState<MetricPeriod>("90d");
   const [entityId, setEntityId] = useState("");
   const [entities, setEntities] = useState<EntityNode[]>([]);
-  const [recent, setRecent] = useState<Finding[] | null>(null);
+  const [recent, setRecent] = useState<Finding[] | null | "error">(null);
   const [tileRows, setTileRows] = useState<Record<string, MetricRow | null>>(
     {},
   );
   const [weekly, setWeekly] = useState<
-    { week: string; opened: number; resolved: number }[] | null
+    { week: string; opened: number; resolved: number }[] | null | "error"
   >(null);
-  const [overdueTeams, setOverdueTeams] = useState<MetricRow[] | null>(null);
+  const [overdueTeams, setOverdueTeams] = useState<
+    MetricRow[] | null | "error"
+  >(null);
 
   useEffect(() => {
     let alive = true;
     setTileRows({});
+    setWeekly(null);
+    setOverdueTeams(null);
     void Promise.all(
       TILES.map((tile) => aggregate(tile.query, period, entityId)),
     ).then((results) => {
@@ -238,8 +243,12 @@ export function Dashboard() {
       WEEKLY.map((w) => aggregate(w.query, period, entityId)),
     ).then(([opened, resolved]) => {
       if (!alive) return;
-      const by = (rows: MetricRow[] | null) =>
-        new Map((rows ?? []).map((r) => [r.key, r.value ?? 0]));
+      if (!opened || !resolved) {
+        setWeekly("error");
+        return;
+      }
+      const by = (rows: MetricRow[]) =>
+        new Map(rows.map((r) => [r.key, r.value ?? 0]));
       const o = by(opened);
       const r = by(resolved);
       setWeekly(
@@ -253,9 +262,11 @@ export function Dashboard() {
     void aggregate(OVERDUE_BY_TEAM, period, entityId).then((rows) => {
       if (alive)
         setOverdueTeams(
-          (rows ?? [])
-            .filter((r) => r.value)
-            .sort((a, b) => (b.value ?? 0) - (a.value ?? 0)),
+          rows
+            ? rows
+                .filter((r) => r.value)
+                .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+            : "error",
         );
     });
     return () => {
@@ -269,13 +280,15 @@ export function Dashboard() {
     const scope = entityId
       ? `entity_id=${entityId}&include_descendants=true`
       : "";
+    setStats(null);
+    setRecent(null);
     void apiJson<Stats>(`/api/v1/findings/stats?${scope}`).then((r) => {
-      if (alive && r.data) setStats(r.data);
+      if (alive) setStats(r.data ?? "error");
     });
     void apiJson<Finding[]>(
       `/api/v1/findings?order=number&limit=${RECENT_LIMIT}&${scope}`,
     ).then((r) => {
-      if (alive) setRecent(r.data ?? []);
+      if (alive) setRecent(r.data ?? "error");
     });
     return () => {
       alive = false;
@@ -301,22 +314,24 @@ export function Dashboard() {
     () => new Map(entities.map((e) => [e.id, e.path])),
     [entities],
   );
-  const delta = weekly
+  const delta = Array.isArray(weekly)
     ? weekly.reduce((sum, w) => sum + w.opened - w.resolved, 0)
     : null;
-  const sevMax = stats
-    ? Math.max(1, ...SEVERITY_ORDER.map((s) => stats.by_severity[s] ?? 0))
+  const statsData = stats === "error" ? null : stats;
+  const sevMax = statsData
+    ? Math.max(1, ...SEVERITY_ORDER.map((s) => statsData.by_severity[s] ?? 0))
     : 1;
-  const statusRows = stats
+  const statusRows = statsData
     ? [
-        ...STATUS_ORDER.filter((st) => st in stats.by_status),
-        ...Object.keys(stats.by_status).filter(
+        ...STATUS_ORDER.filter((st) => st in statsData.by_status),
+        ...Object.keys(statsData.by_status).filter(
           (st) => !STATUS_ORDER.includes(st),
         ),
-      ].map((st) => [st, stats.by_status[st]] as const)
+      ].map((st) => [st, statsData.by_status[st]] as const)
     : [];
   const statusMax = Math.max(1, ...statusRows.map(([, cnt]) => cnt));
   const loading = <p className="dash-muted">{t("common.loading")}</p>;
+  const failed = <p className="dash-muted">{t("common.error")}</p>;
 
   return (
     <div>
@@ -372,7 +387,7 @@ export function Dashboard() {
           <span className="stat-label">{t("dashboard.bySeverity")}</span>
           <div className="sev-list">
             {SEVERITY_ORDER.map((sev) => {
-              const cnt = stats ? (stats.by_severity[sev] ?? 0) : null;
+              const cnt = statsData ? (statsData.by_severity[sev] ?? 0) : null;
               return (
                 <div key={sev} style={{ display: "contents" }}>
                   <span
@@ -418,6 +433,8 @@ export function Dashboard() {
         </div>
         {weekly === null ? (
           loading
+        ) : weekly === "error" ? (
+          failed
         ) : (
           <div style={{ width: "100%", height: 260 }}>
             <ResponsiveContainer>
@@ -484,6 +501,8 @@ export function Dashboard() {
           </div>
           {overdueTeams === null ? (
             loading
+          ) : overdueTeams === "error" ? (
+            failed
           ) : overdueTeams.length === 0 ? (
             <p className="dash-muted">{t("dashboard.noOverdue")}</p>
           ) : (
@@ -512,6 +531,8 @@ export function Dashboard() {
           </div>
           {stats === null ? (
             loading
+          ) : stats === "error" ? (
+            failed
           ) : statusRows.length === 0 ? (
             <p className="dash-muted">{t("dashboard.noData")}</p>
           ) : (
@@ -544,6 +565,8 @@ export function Dashboard() {
         </div>
         {recent === null ? (
           <div style={{ padding: "0 16px 14px" }}>{loading}</div>
+        ) : recent === "error" ? (
+          <div style={{ padding: "0 16px 14px" }}>{failed}</div>
         ) : recent.length === 0 ? (
           <p className="dash-muted" style={{ padding: "0 16px 14px" }}>
             {t("vulns.empty")}
@@ -554,7 +577,7 @@ export function Dashboard() {
               <thead>
                 <tr>
                   <th>{t("vulns.number")}</th>
-                  <th>{t("vulns.title")}</th>
+                  <th>{t("vulns.name")}</th>
                   <th>{t("severity.label")}</th>
                   <th>{t("vulns.project")}</th>
                 </tr>
