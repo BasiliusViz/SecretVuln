@@ -64,5 +64,9 @@ class DecisionRequest(Base, UUIDPKMixin, TimestampMixin):
     decided_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+    # Запрос создан «по правилу команды»
+    memory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("triage_memories.id", ondelete="SET NULL")
+    )
     decision_comment: Mapped[str | None] = mapped_column(Text)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

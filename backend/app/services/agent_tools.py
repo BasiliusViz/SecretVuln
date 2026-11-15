@@ -25,10 +25,18 @@ from app.api.findings import (
     list_finding_events,
     to_detail,
 )
-from app.models import AiAnalysis, AiVerdict, Entity, Finding, FindingStatus, Severity
+from app.models import (
+    AiAnalysis,
+    AiVerdict,
+    Entity,
+    Finding,
+    FindingStatus,
+    Severity,
+    TriageMemory,
+)
 from app.schemas.ai_analysis import AiAnalysisCreate, AiAnalysisRead
 from app.services.ai_analyses import create_analysis, list_analyses
-from app.services import similarity
+from app.services import memories, similarity
 from app.services.embeddings import embed_client
 from app.services.entity_settings import effective_settings
 from app.services.llm import LlmError
@@ -207,6 +215,53 @@ async def get_finding(db: AsyncSession, principal: Principal, ref: str) -> dict[
             for e in events
         ],
         "analyses": [_analysis(a) for a in await list_analyses(db, finding.id)],
+        # правило команды — подсказка людей, не решение: статус находки оно не меняет
+        "memory": await _finding_memory(db, finding),
+    }
+
+
+def _memory(memory: TriageMemory, path: str) -> dict[str, Any]:
+    return {
+        "id": str(memory.id),
+        "scope": path,
+        "scanner": memory.scanner,
+        "rule_id": memory.rule_id,
+        "cwe": memory.cwe,
+        "path_glob": memory.path_glob,
+        "decision": memory.decision.value,
+        "reason_tag": memory.reason_tag.value if memory.reason_tag else None,
+        "reason": memory.reason,
+    }
+
+
+async def _finding_memory(db: AsyncSession, finding: Finding) -> dict[str, Any] | None:
+    if finding.memory_id is None:
+        return None
+    row = (
+        await db.execute(
+            select(TriageMemory, Entity.path_cache)
+            .join(Entity, Entity.id == TriageMemory.entity_id)
+            .where(TriageMemory.id == finding.memory_id)
+        )
+    ).first()
+    return _memory(*row) if row else None
+
+
+async def list_memories(db: AsyncSession, principal: Principal, project: str) -> dict[str, Any]:
+    """Действующие правила команды для проекта (его собственные и предков), точные — первыми."""
+    project = project.strip().strip("/")
+    try:
+        cond = Entity.id == uuid.UUID(project)
+    except ValueError:
+        cond = Entity.path_cache == project
+    entity = await db.scalar(select(Entity).where(cond))
+    if entity is None or not principal.access.allows("finding:read", entity):
+        raise not_found("Проект")
+    rules = await memories.load_rules(db, entity.path_cache)
+    rules.sort(key=memories.precision)
+    return {
+        "project": entity.path_cache,
+        "memories": [_memory(r.memory, r.path) for r in rules],
     }
 
 

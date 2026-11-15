@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.models import AiAnalysis, AiAnalysisKind, AiReviewStatus, Entity, Finding, FindingStatus
 from app.models.ai_analysis import AiVerdict
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
+from app.models.triage_memory import TriageMemory
 from app.models.import_ import Import, ImportStatus
 from app.services.ai_analyses import _lock_finding, refresh_ai_verdict
 from app.services.embeddings import embed_client, ensure_embedding
@@ -81,7 +82,8 @@ async def triage_finding(
     if finding is None:
         return []
     similar = await similar_decided(db, finding, embed)
-    messages = build_messages(finding, similar)
+    memory = await db.get(TriageMemory, finding.memory_id) if finding.memory_id else None
+    messages = build_messages(finding, similar, memory)
     similar_ids = [str(f.id) for f, _ in similar]
     await db.commit()  # пока только читали — закрываем транзакцию на время ответа модели
     answer = await client.chat_json(messages, TriageAnswer)

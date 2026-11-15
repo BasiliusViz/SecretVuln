@@ -52,7 +52,34 @@ def _user_text(messages: list[dict]) -> str:
 
 
 def test_prompt_version():
-    assert PROMPT_VERSION == "triage-v2"
+    assert PROMPT_VERSION == "triage-v3"
+
+
+def test_team_memory_goes_inside_untrusted_block():
+    from app.models import DecisionType, ReasonTag, TriageMemory
+
+    memory = TriageMemory(
+        rule_id="python.sqli",
+        path_glob="tests/**",
+        decision=DecisionType.false_positive,
+        reason_tag=ReasonTag.test_code,
+        reason="Фикстуры тестов, в прод не попадают. password=hunter2hunter2",
+    )
+    messages = build_messages(_finding(), memory=memory)
+    assert "правило команды" in messages[0]["content"].lower()
+    text = _user_text(messages)
+    block = text.split("<finding_data", 1)[1].rsplit("</finding_data", 1)[0]
+    for part in (
+        "Правило команды",
+        "правило python.sqli",
+        "путь tests/**",
+        "ложное срабатывание",
+        "тестовый или демо-код",
+        "Фикстуры тестов",
+    ):
+        assert part in block, part
+    assert "hunter2hunter2" not in text  # обоснование маскируется, как и остальной текст
+    assert "Правило команды" not in _user_text(build_messages(_finding()))
 
 
 def test_messages_contain_finding_facts():

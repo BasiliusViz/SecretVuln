@@ -13,6 +13,8 @@ class DecisionCreate(BaseModel):
     expires_at: datetime | None = None
     # запрос «по выводу ИИ»: ссылка попадает в событие истории
     ai_analysis_id: uuid.UUID | None = None
+    # запрос «по правилу команды»: правило должно быть подсказкой этой находки
+    memory_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _check(self) -> "DecisionCreate":
@@ -61,6 +63,7 @@ class DecisionRead(BaseModel):
     expires_at: datetime | None
     requested_by_id: uuid.UUID | None
     decided_by_id: uuid.UUID | None
+    memory_id: uuid.UUID | None = None
     decision_comment: str | None
     decided_at: datetime | None
     created_at: datetime

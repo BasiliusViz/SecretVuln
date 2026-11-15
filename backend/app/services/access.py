@@ -140,6 +140,28 @@ class Access:
             select(Entity.id).where(_prefix_condition(scope, Entity.path_cache))
         )
 
+    # --- область «сверху»: правила команды ---
+
+    def allows_from_above(self, perm: str, target: Entity | str) -> bool:
+        """Право на проект **или на его потомка**: объект, привязанный к предку
+        (правило команды), действует на проекты вызывающего — значит, он его видит."""
+        scope = self.prefixes(perm)
+        if scope is None:
+            return True
+        path = _path_of(target)
+        return any(in_prefix(path, p) or in_prefix(p, path) for p in scope)
+
+    def filter_from_above(self, perm: str, path_column) -> ColumnElement[bool]:
+        """SQL-вариант `allows_from_above`."""
+        scope = self.prefixes(perm)
+        if scope is None:
+            return true()
+        if not scope:
+            return false()
+        anc = sorted({a for p in scope for a in ancestors(p)})
+        cond = _prefix_condition(scope, path_column)
+        return or_(cond, path_column.in_(anc)) if anc else cond
+
     # --- видимость заглушек ---
 
     def _all_prefixes(self) -> Scope:

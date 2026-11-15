@@ -102,6 +102,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("import", "read"), ("import", "import"), ("import", "delete"),
             ("group", "read"),
             ("sla", "read"), ("sla", "manage"), ("sla", "assign"),
+            ("memory", "manage"),
         ],
     ),
     "Руководитель команды": (
@@ -133,6 +134,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("access", "manage"),
             ("audit", "read"),
             ("token", "manage"),
+            ("memory", "manage"),
         ],
     ),
 }

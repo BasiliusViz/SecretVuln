@@ -23,6 +23,17 @@ class UserBriefLite(BaseModel):
     full_name: str | None
 
 
+class MemoryBrief(BaseModel):
+    """Правило команды, подсказанное находке."""
+
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    decision: str
+    reason_tag: str | None
+    reason: str | None
+
+
 class FindingRead(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -56,6 +67,8 @@ class FindingRead(BaseModel):
     due_at: datetime | None = None
     resolved_at: datetime | None = None
     ai_verdict: str | None = None
+    memory_id: uuid.UUID | None = None
+    memory: MemoryBrief | None = None
 
 
 class FindingStatusUpdate(BaseModel):

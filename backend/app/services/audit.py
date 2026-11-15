@@ -63,6 +63,12 @@ TOKEN_REVOKE = "token.revoke"
 
 AI_TRIAGE_REQUEST = "ai_triage.request"
 
+MEMORY_CREATE = "memory.create"
+MEMORY_UPDATE = "memory.update"
+MEMORY_APPROVE = "memory.approve"
+MEMORY_DISABLE = "memory.disable"
+MEMORY_SUGGEST = "memory.suggest"  # предложено системой после одобренных решений
+
 ACTIONS: tuple[str, ...] = tuple(
     v for k, v in dict(globals()).items() if k.isupper() and isinstance(v, str) and "." in v
 )
@@ -97,6 +103,10 @@ FIELDS: dict[str, tuple[str, ...]] = {
     "service_account": ("email", "full_name", "is_active"),
     # prefix — несекретное начало токена (`sv_ab12cd34`), сам токен и хеш не пишутся
     "api_token": ("name", "prefix", "expires_at", "revoked_at"),
+    "memory": (
+        "entity_id", "scanner", "rule_id", "cwe", "path_glob",
+        "decision", "reason_tag", "reason", "status", "source",
+    ),
 }
 
 # Ссылки, рядом с которыми пишется имя: UUID в журнале ничего не скажет аудитору,
@@ -288,6 +298,12 @@ def record_audit(
     )
     db.add(row)
     return row
+
+
+def memory_label(memory: Any) -> str:
+    """Подпись правила команды для журнала: его условие (`rule.a · tests/**`)."""
+    parts = [getattr(memory, f) for f in ("scanner", "rule_id", "cwe", "path_glob")]
+    return " · ".join(p for p in parts if p)
 
 
 def entity_target(entity: Entity) -> tuple[str, uuid.UUID, str]:

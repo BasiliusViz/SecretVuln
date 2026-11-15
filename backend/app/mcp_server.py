@@ -113,11 +113,23 @@ async def find_similar(ctx: Context, finding: str, k: int = 5) -> dict:
 
 @server.tool()
 async def get_finding(ctx: Context, finding: str) -> dict:
-    """Уязвимость целиком: поля, история, выводы ИИ, repo_url и ветка проекта.
+    """Уязвимость целиком: поля, история, выводы ИИ, repo_url и ветка проекта,
+    правило команды-подсказка (memory), если оно подошло.
 
     finding — UUID или номер (`SV-123`).
     """
     return await _run(ctx, lambda db, p: agent_tools.get_finding(db, p, finding))
+
+
+@server.tool()
+async def list_memories(ctx: Context, project: str) -> dict:
+    """Действующие правила команды для проекта — его собственные и унаследованные от
+    предков: «такие находки считаем ложными / принимаем риск» и почему. Это подсказка
+    людей, а не решение: учитывайте её в выводе, но статус по ней не меняется.
+
+    project — UUID или путь проекта (`fintech/payments/api`).
+    """
+    return await _run(ctx, lambda db, p: agent_tools.list_memories(db, p, project))
 
 
 @server.tool()

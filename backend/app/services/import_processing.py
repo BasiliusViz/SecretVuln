@@ -16,6 +16,7 @@ from app.services.entity_settings import is_http_url, normalize_repo_url
 from app.services.entity_tree import branch_allowed, branch_rejection_message, resolve_default_branch
 from app.services.events import record_event
 from app.services.finding_state import due_from, policy_for_entity, set_status
+from app.services.memories import hint_imported
 from app.services.ownership import build_resolver, reassign_entity
 from app.services.sarif import SarifRun, get_normalizer
 
@@ -82,6 +83,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
     scanner_name: str | None = None
     now = datetime.now(timezone.utc)
     seen: dict[str, set[str]] = {}
+    to_hint: list[Finding] = []  # новые и переоткрытые — им подбирается правило команды
 
     for run in runs:
         scanner_name = run.scanner
@@ -113,6 +115,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                         from_status=FindingStatus.fixed, to_status=FindingStatus.new,
                         payload={"import_id": str(imp.id)},
                     )
+                    to_hint.append(existing)
                     updated += 1
                 else:
                     duplicates += 1
@@ -144,6 +147,7 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                 finding.sla_start_at = now
                 finding.due_at = due_from(policy, finding.severity, now)
                 db.add(finding)
+                to_hint.append(finding)
                 record_event(
                     db, finding_id, FindingEventType.imported,
                     to_status=FindingStatus.new,
@@ -155,6 +159,8 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
                 created += 1
 
         await db.flush()
+
+    hinted = await hint_imported(db, to_hint, imp.entity_id)
 
     closed, warnings = 0, []
     if imp.close_missing:
@@ -172,6 +178,8 @@ async def apply_import(db: AsyncSession, imp: Import, runs: list[SarifRun]) -> d
         "closed": closed,
         "reassigned": reassigned,
     }
+    if hinted:
+        stats["memory_hints"] = hinted
     if warnings:
         stats["warnings"] = warnings
     return stats

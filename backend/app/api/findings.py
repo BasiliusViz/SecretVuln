@@ -146,6 +146,7 @@ async def findings_query(
     tag: str | None = None,
     ai_verdicts: list[AiVerdict] | None = None,
     no_ai_verdict: bool = False,
+    has_memory: bool | None = None,
     order: str = "last_seen",
 ):
     """Запрос списка находок с фильтрами — общий для REST и MCP."""
@@ -174,6 +175,10 @@ async def findings_query(
         q = q.where(Finding.ai_verdict.in_(ai_verdicts))
     elif no_ai_verdict:
         q = q.where(Finding.ai_verdict.is_(None))
+    if has_memory is not None:
+        q = q.where(
+            Finding.memory_id.is_not(None) if has_memory else Finding.memory_id.is_(None)
+        )
     if pending_decision:
         q = q.where(
             select(DecisionRequest.id)
@@ -218,6 +223,7 @@ async def list_findings(
     tag: str | None = Query(None, max_length=64),
     ai_verdict: list[AiVerdict] | None = Query(None),
     no_ai_verdict: bool = False,
+    has_memory: bool | None = None,
     order: Literal["last_seen", "severity", "number", "due_at"] = "last_seen",
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
@@ -230,7 +236,7 @@ async def list_findings(
         statuses=finding_status, scanner=scanner, assignee_group_id=assignee_group_id,
         unassigned=unassigned, mine=mine, help_requested=help_requested,
         pending_decision=pending_decision, overdue=overdue, tag=tag,
-        ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict, order=order,
+        ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict, has_memory=has_memory, order=order,
     )
     result = await db.scalars(q.offset(offset).limit(limit))
     return list(result)

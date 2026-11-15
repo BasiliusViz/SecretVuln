@@ -68,7 +68,7 @@ async def test_triage_writes_summary_and_triage(db):
     for r in stored:
         assert r.agent == BUILTIN_AGENT == "sv-builtin"
         assert r.model == "fake-model"
-        assert r.prompt_version == "triage-v2"
+        assert r.prompt_version == "triage-v3"
         assert r.similar_ids == []  # векторы выключены — без похожих
         assert r.created_by is None
         assert r.review_status == AiReviewStatus.pending
@@ -292,7 +292,7 @@ async def test_triage_v2_uses_decided_similar_from_subtree(db, embeddings_on):
 
     expected = {str(fp.id), str(conf.id)}
     for r in rows:
-        assert r.prompt_version == "triage-v2"
+        assert r.prompt_version == "triage-v3"
         assert set(r.similar_ids) == expected
     sent = client.calls[0][1]["content"]
     assert key not in sent and "[MASKED]" in sent

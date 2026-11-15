@@ -90,6 +90,25 @@ async def make_finding(
     return finding
 
 
+async def make_memory(db: AsyncSession, entity: Entity, **kw: Any):
+    """Правило команды; по умолчанию действующее «ложное» по rule_id=rule.a."""
+    from app.models import DecisionType, MemoryStatus, TriageMemory
+
+    if not any(k in kw for k in ("scanner", "rule_id", "cwe", "path_glob")):
+        kw["rule_id"] = "rule.a"
+    memory = TriageMemory(
+        entity_id=entity.id,
+        decision=kw.pop("decision", DecisionType.false_positive),
+        status=kw.pop("status", MemoryStatus.approved),
+        reason=kw.pop("reason", "Тестовый код"),
+        **kw,
+    )
+    db.add(memory)
+    await db.commit()
+    await db.refresh(memory)
+    return memory
+
+
 async def make_group(db: AsyncSession, name: str = "team") -> UserGroup:
     group = UserGroup(name=name, source=GroupSource.manual)
     db.add(group)

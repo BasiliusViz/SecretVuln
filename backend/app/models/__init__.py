@@ -12,6 +12,7 @@ from app.models.ownership_rule import OwnershipRule, RuleSource
 from app.models.role import Role
 from app.models.role_binding import RoleBinding
 from app.models.sla_policy import SlaPolicy
+from app.models.triage_memory import MemorySource, MemoryStatus, TriageMemory
 from app.models.user import AuthSource, User
 from app.models.user_group import GroupSource, UserGroup, user_group_members
 
@@ -48,4 +49,7 @@ __all__ = [
     "AiReviewStatus",
     "AiVerdict",
     "ApiToken",
+    "TriageMemory",
+    "MemoryStatus",
+    "MemorySource",
 ]

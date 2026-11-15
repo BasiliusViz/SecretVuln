@@ -56,6 +56,11 @@ ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/v1/decisions"): "list",
     ("POST", "/api/v1/decisions/{decision_id}/approve"): "point",
     ("POST", "/api/v1/decisions/{decision_id}/reject"): "point",
+    # правила команды: чтение — область или проект под ней, изменение — memory:manage на область
+    ("GET", "/api/v1/memories"): "list",
+    ("POST", "/api/v1/memories"): "point",
+    ("GET", "/api/v1/memories/{memory_id}"): "point",
+    ("PATCH", "/api/v1/memories/{memory_id}"): "point",  # перенос области: обе ветки
     ("POST", "/api/v1/metrics/aggregate"): "list",
     # выводы ИИ
     ("GET", "/api/v1/findings/{finding_id}/analyses"): "point",

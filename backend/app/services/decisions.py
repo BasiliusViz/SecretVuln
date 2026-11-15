@@ -11,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.decision_request import DecisionRequest, DecisionStatus
 from app.models.finding import Finding, FindingStatus
 from app.models.finding_event import ActorType, FindingEventType
+from app.models.triage_memory import MemoryStatus, TriageMemory
 from app.schemas.decision import DecisionCreate
 from app.services.ai_analyses import AnalysisError, analysis_of_finding
 from app.services.events import record_event
 from app.services.finding_state import set_status
+from app.services.memories import suggest_after_approval
 
 # Находка в этих статусах уже не нуждается в решении
 CLOSED_STATUSES = (FindingStatus.false_positive, FindingStatus.risk_accepted, FindingStatus.fixed)
@@ -29,6 +31,10 @@ class DecisionError(Exception):
 
 def _tag(req: DecisionRequest) -> str | None:
     return req.reason_tag.value if req.reason_tag else None
+
+
+def _memory_ref(req: DecisionRequest) -> dict[str, str]:
+    return {"memory_id": str(req.memory_id)} if req.memory_id else {}
 
 
 async def create_request(
@@ -53,6 +59,17 @@ async def create_request(
         analysis = await analysis_of_finding(db, data.ai_analysis_id, finding.id)
     except AnalysisError as e:
         raise DecisionError(e.status_code, e.detail)
+    if data.memory_id is not None:
+        # «по правилу» — только по действующей подсказке самой находки и с её решением
+        memory = await db.get(TriageMemory, data.memory_id)
+        if (
+            memory is None
+            or finding.memory_id != memory.id
+            or memory.status != MemoryStatus.approved
+        ):
+            raise DecisionError(422, "Правило команды не подходит к этой находке")
+        if memory.decision != data.decision_type:
+            raise DecisionError(422, "Тип решения не совпадает с правилом команды")
 
     req = DecisionRequest(
         id=uuid.uuid4(),
@@ -63,6 +80,7 @@ async def create_request(
         reason=data.reason,
         expires_at=data.expires_at,
         requested_by_id=user_id,
+        memory_id=data.memory_id,
     )
     db.add(req)
     record_event(
@@ -73,6 +91,7 @@ async def create_request(
             "decision_id": str(req.id),
             "decision_type": req.decision_type.value,
             **({"ai_analysis_id": str(analysis.id)} if analysis else {}),
+            **_memory_ref(req),
         },
     )
     if can_approve:
@@ -100,8 +119,13 @@ async def approve_request(
         actor_type=ActorType.user, actor_id=user_id,
         from_status=previous, to_status=finding.status,
         reason=req.reason, reason_tag=_tag(req),
-        payload={"decision_id": str(req.id), "result": "approved", "comment": comment},
+        payload={
+            "decision_id": str(req.id), "result": "approved", "comment": comment,
+            **_memory_ref(req),
+        },
     )
+    # набралось достаточно одинаковых решений — предложить правило команды
+    await suggest_after_approval(db, finding, req)
 
 
 async def reject_request(

@@ -152,7 +152,13 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
         Enum(AiVerdict, name="ai_verdict"), index=True
     )
 
+    # Подсказка: правило команды, подходящее к находке (не больше одного, статус не меняет)
+    memory_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("triage_memories.id", ondelete="SET NULL"), index=True
+    )
+
     entity = relationship("Entity", back_populates="findings")
     import_ = relationship("Import", back_populates="findings")
     assignee_group = relationship("UserGroup", lazy="selectin")
     assignee_user = relationship("User", lazy="selectin")
+    memory = relationship("TriageMemory", lazy="selectin")
