@@ -13,6 +13,7 @@ import {
 
 import { apiFetch } from "../api/client";
 import { apiJson } from "../api/json";
+import { OPEN_STATUSES } from "../api/types";
 import type {
   EntityNode,
   Finding,
@@ -27,6 +28,7 @@ import { SEVERITY_ORDER, useSeverityColors } from "../theme/severity";
 
 const PERIODS: MetricPeriod[] = ["30d", "90d", "365d"];
 const RECENT_LIMIT = 8;
+const RECENT_STATUSES = OPEN_STATUSES.map((s) => `status=${s}`).join("&");
 const STATUS_ORDER = [
   "new",
   "triaged",
@@ -286,7 +288,8 @@ export function Dashboard() {
       if (alive) setStats(r.data ?? "error");
     });
     void apiJson<Finding[]>(
-      `/api/v1/findings?order=number&limit=${RECENT_LIMIT}&${scope}`,
+      // только открытые: закрытые и решённые в таблице без колонки статуса сбивают с толку
+      `/api/v1/findings?order=number&limit=${RECENT_LIMIT}&${RECENT_STATUSES}&${scope}`,
     ).then((r) => {
       if (alive) setRecent(r.data ?? "error");
     });
@@ -569,7 +572,7 @@ export function Dashboard() {
           <div style={{ padding: "0 16px 14px" }}>{failed}</div>
         ) : recent.length === 0 ? (
           <p className="dash-muted" style={{ padding: "0 16px 14px" }}>
-            {t("vulns.empty")}
+            {t("dashboard.recentEmpty")}
           </p>
         ) : (
           <div style={{ overflowX: "auto" }}>
