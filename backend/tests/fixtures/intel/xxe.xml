@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE vulnerabilities [<!ENTITY x SYSTEM "file:///etc/passwd">]>
+<vulnerabilities><vul><identifier>BDU:2021-00001</identifier><name>&x;</name></vul></vulnerabilities>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Weakness_Catalog xmlns="http://cwe.mitre.org/cwe-7" Name="CWE" Version="4.16" Date="2024-11-19">
+  <Weaknesses>
+    <Weakness ID="89" Name="Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')" Abstraction="Base" Structure="Simple" Status="Stable">
+      <Description>SQL injection.</Description>
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="943" View_ID="1000"/>
+      </Related_Weaknesses>
+    </Weakness>
+    <Weakness ID="502" Name="Deserialization of Untrusted Data" Abstraction="Base" Structure="Simple" Status="Draft">
+      <Description>Deserialization.</Description>
+    </Weakness>
+    <Weakness ID="79" Name="Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')" Abstraction="Base" Structure="Simple" Status="Stable"/>
+  </Weaknesses>
+  <Categories>
+    <Category ID="1409" Name="Comprehensive Categorization: Injection" Status="Draft">
+      <Summary>Weaknesses in this category are related to injection.</Summary>
+      <Relationships>
+        <Has_Member CWE_ID="89" View_ID="1400"/>
+        <Has_Member CWE_ID="79" View_ID="1400"/>
+      </Relationships>
+    </Category>
+    <Category ID="1415" Name="Comprehensive Categorization: Resource Control" Status="Draft">
+      <Relationships>
+        <Has_Member CWE_ID="502" View_ID="1400"/>
+      </Relationships>
+    </Category>
+    <Category ID="16" Name="Configuration" Status="Obsolete">
+      <Relationships>
+        <Has_Member CWE_ID="89" View_ID="699"/>
+      </Relationships>
+    </Category>
+  </Categories>
+  <Views>
+    <View ID="1400" Name="Comprehensive Categorization for Software Assurance Trends" Type="Graph" Status="Incomplete"/>
+  </Views>
+</Weakness_Catalog>

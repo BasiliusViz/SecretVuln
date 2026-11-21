@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<vulnerabilities>
+  <vul>
+    <identifier>BDU:2021-05969</identifier>
+    <name>Уязвимость библиотеки журналирования Apache Log4j</name>
+    <description>Уязвимость позволяет выполнить произвольный код</description>
+    <identify_date>10.12.2021</identify_date>
+    <severity>Критический уровень опасности (базовая оценка CVSS 3.0 составляет 10)</severity>
+    <identifiers>
+      <identifier type="CVE" link="https://nvd.nist.gov/vuln/detail/CVE-2021-44228">CVE-2021-44228</identifier>
+      <identifier type="GHSA">GHSA-jfh8-c2jp-5v3q</identifier>
+    </identifiers>
+    <cwes>
+      <cwe><identifier>CWE-502</identifier><name>Десериализация</name></cwe>
+    </cwes>
+  </vul>
+  <vul>
+    <identifier>BDU:2014-00001</identifier>
+    <name>Уязвимость OpenSSL (Heartbleed)</name>
+    <severity>Высокий уровень опасности</severity>
+    <identifiers>
+      <identifier type="CVE">CVE-2014-0160</identifier>
+    </identifiers>
+  </vul>
+  <vul>
+    <identifier>BDU:2015-00002</identifier>
+    <name>Уязвимость без CVE</name>
+    <severity>Средний уровень опасности</severity>
+  </vul>
+</vulnerabilities>

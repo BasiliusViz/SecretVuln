@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?><Weakness_Catalog Name="CWE" Version="5.0" Date="2026-10-28" xmlns="http://cwe.mitre.org/cwe-8">
+  <Weaknesses>
+    <Weakness ID="89" Name="Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')" Abstraction="Base" Status="Stable"/>
+  </Weaknesses>
+  <Groupings>
+    <Grouping ID="1409" Name="Comprehensive Categorization: Injection" Status="Incomplete">
+      <Relationships><Has_Member CWE_ID="89" View_ID="1400"/></Relationships>
+    </Grouping>
+  </Groupings>
+</Weakness_Catalog>
