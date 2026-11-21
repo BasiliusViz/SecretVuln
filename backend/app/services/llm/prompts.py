@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -114,6 +115,10 @@ def _memory_lines(memory: TriageMemory) -> list[str]:
     return lines
 
 
+# id в справочном блоке — только строгого вида: блок лежит вне границы недоверенных данных,
+# а `findings.cwe` и CVE приходят из SARIF (тег вида «CWE-89 <любой текст>»)
+_CWE_ID = re.compile(r"CWE-\d{1,6}")
+_CVE_ID = re.compile(r"CVE-\d{4}-\d{4,20}")
 MAX_INTEL_CVES = 10  # CVE в справочном блоке (у пакетных находок их бывает много)
 
 
@@ -121,7 +126,7 @@ def _intel_lines(intel: dict[str, Any]) -> list[str]:
     """Справочные данные: публичные базы, маскирование не нужно, но длину ограничиваем."""
     lines: list[str] = []
     cwe = intel.get("cwe")
-    if cwe:
+    if cwe and _CWE_ID.fullmatch(str(cwe.get("id") or "")):
         text = cwe["id"]
         if cwe.get("name"):
             text += f" — {_clip(cwe['name'], 300)}"
@@ -130,6 +135,8 @@ def _intel_lines(intel: dict[str, Any]) -> list[str]:
         lines.append(f"CWE: {text}")
     cves = intel.get("cves") or []
     for cve in cves[:MAX_INTEL_CVES]:
+        if not _CVE_ID.fullmatch(str(cve.get("id") or "")):
+            continue
         parts = []
         if cve.get("epss") is not None:
             parts.append(
