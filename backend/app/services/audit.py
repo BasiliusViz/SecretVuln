@@ -69,6 +69,8 @@ MEMORY_APPROVE = "memory.approve"
 MEMORY_DISABLE = "memory.disable"
 MEMORY_SUGGEST = "memory.suggest"  # предложено системой после одобренных решений
 
+INTEL_LOAD = "intel.load"  # загрузка справочника (пишет воркер load_intel, и при ошибке)
+
 ACTIONS: tuple[str, ...] = tuple(
     v for k, v in dict(globals()).items() if k.isupper() and isinstance(v, str) and "." in v
 )

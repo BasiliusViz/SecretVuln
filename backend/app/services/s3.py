@@ -32,6 +32,18 @@ def get_object(key: str) -> bytes:
     return buf.getvalue()
 
 
+def put_stream(key: str, stream) -> None:
+    _client().upload_fileobj(stream, get_settings().s3_bucket, key)
+
+
+def download_to(key: str, out) -> None:
+    _client().download_fileobj(get_settings().s3_bucket, key, out)
+
+
+def delete_object(key: str) -> None:
+    _client().delete_object(Bucket=get_settings().s3_bucket, Key=key)
+
+
 def bucket_available() -> bool:
     try:
         _client().head_bucket(Bucket=get_settings().s3_bucket)
