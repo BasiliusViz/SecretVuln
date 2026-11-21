@@ -115,6 +115,21 @@ API: `GET /api/v1/imports` (все), `GET /api/v1/imports/{id}`, `GET /api/v1/en
 - ИИ: MCP `list_memories(project)`, правило в `get_finding`; промпт `triage-v3` получает правило-подсказку внутри границы недоверенных данных.
 - UI: страница `/memories` (`pages/Memories.tsx`: вкладки по статусу, фильтр по проекту, форма), счётчик предложенных в сайдбаре (`?status=suggested&manageable=true`, только при `memory:manage`, обновляется по событию окна `MEMORIES_CHANGED`), блок «Правило команды» в окне SV-N с кнопкой «Запросить по правилу» (`DecisionDialog` с `initial`, запрос уходит с `memory_id`), значок и фильтр «Есть правило команды» в «Уязвимостях». e2e — `memories.spec.ts`.
 
+## Обогащение — «Справочники» (этап 10 — бэкенд РЕАЛИЗОВАН)
+
+Спека — `docs/superpowers/specs/2026-11-21-stage10-enrichment-design.md`, открытое — `docs/stage10-handoff.md`.
+
+- **Закрытый контур**: воркер в интернет не ходит, файлы EPSS / CISA KEV / БДУ ФСТЭК / CWE загружает администратор. Влияния на SLA и severity нет — только показ, фильтры и ИИ.
+- **Хранение — гибрид** (миграция `0021`): полные данные в `intel_epss`, `intel_kev`, `intel_bdu` + `intel_bdu_cve`, `intel_cwe`; состояние источников — `intel_sources` (`idle/loading/ok/failed`, `file_date`, `record_count`, `loaded_by`, `error`, `started_at`). В находке — только сводные поля: `cves text[]` (GIN), `epss_max` (максимум по её CVE), `kev`, `has_bdu`.
+- **CVE из SARIF** (`sarif/parser.py`, `extract_cves`): `CVE-\d{4}-\d{4,20}` без учёта регистра в `ruleId`, `rule.id`, свойствах (и тегах) правила и свойствах result; текст сообщения не смотрим. Верхний регистр, без дублей. GHSA без CVE не разрешаем.
+- **Загрузка**: `POST /intel/{source}` (`intel:manage`, только глобальное — `GLOBAL_ONLY`) проверяет расширение и размер (`SV_INTEL_MAX_MB`), кладёт файл в хранилище (`storage.save_stream`, ключ `intel/<source>/…`), ставит `loading` и задачу ARQ `load_intel`. Повтор при `loading` — 409; «зависшая» загрузка (воркер не отчитался за 2 ч, `read.LOADING_TIMEOUT`) не блокирует и показывается как `failed`.
+- **`load_intel`** (`services/intel/loader.py`): потоковый парсер (`parsers.py`: CSV по строкам, XML — `XMLPullParser` кусками, gzip/zip по сигнатуре, DOCTYPE/ENTITY отклоняются) → в одной транзакции delete + пачки по 5000 → `recompute_findings` (один `UPDATE … FROM`, не трогает `updated_at`) → `ok` → аудит `intel.load`. Ошибка — откат, старые данные и их `file_date`/`record_count` остаются, `failed` + текст, `intel.load` со `status: failed`. Файл после разбора удаляется.
+- **Импорт** (`apply_import`): `cves` у новых и обновлённых находок + `enrich_findings(ids)` по текущим справочникам. Старые находки — `python -m app.cli backfill-intel` (по `raw`, где правила нет; идемпотентно).
+- **CWE встроен**: `services/intel/data/cwe.json` (MITRE CWE 5.0, категория — представление 1400 «Comprehensive Categorization»; в 4.x это `Category`, в 5.x — `Grouping`, парсер понимает оба) грузится `seed-roles`, только если таблица пуста.
+- **Устаревание** (`read.STALE_DAYS`): EPSS старше 30 дней, KEV старше 7 по `file_date` — только подсказка (`stale` в `GET /intel` и в блоке `intel` находки).
+- **API находок**: `GET /findings/{id}` — блок `intel` (`cwe`, `cves[]` с EPSS / KEV / БДУ, `stale`, `sources`); список — поля `cves`, `epss_max`, `kev`, `has_bdu`, фильтры `kev`, `min_epss`, `has_bdu`, `cwe_category`, `order=epss_max`. Метрики — `group_by: cwe_category` (LEFT JOIN `intel_cwe`), фильтр `kev`.
+- **ИИ**: промпт `triage-v4` — блок `<reference_data>` после границы недоверенных данных (публичные базы, маскирования нет, до 10 CVE). MCP: `get_finding` → `intel`, `search_findings(kev, min_epss, order=epss_max)`.
+
 ## Локализация и дизайн (см. frontend/DESIGN.md)
 
 Продукт для русскоязычного рынка: **весь UI на русском** (react-i18next, плюрализация «находка/находки/находок», даты DD.MM.YYYY, локаль ru-RU). Код, API, enum-значения в БД — на английском, перевод только на фронтенде; словарь терминов и таблица переводов enum'ов — в frontend/DESIGN.md.

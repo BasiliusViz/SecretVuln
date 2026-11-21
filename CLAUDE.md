@@ -49,6 +49,7 @@ Vulnerability management платформа: импорт находок без�
 | `api/analyses.py`, `services/ai_analyses.py` | Выводы ИИ (`ai_analyses`), рассмотрение, `findings.ai_verdict` |
 | `mcp_server.py`, `services/agent_tools.py` | MCP для агентов (порт `SV_MCP_PORT`), инструменты поверх тех же запросов |
 | `api/memories.py`, `services/memories.py` | Правила команды (`triage_memories`): сопоставление, подсказка `findings.memory_id`, пересчёт, предложения |
+| `api/intel.py`, `services/intel/` | Справочники EPSS/KEV/БДУ/CWE: загрузка (`parsers`, `loader`), сводные поля находок (`enrich`), блок `intel` и устаревание (`read`), встроенный CWE и `backfill-intel` (`builtin`, `data/cwe.json`) |
 | `services/masking.py` | Маскирование секретов и `is_secret_finding` (эмбеддинги и промпт ИИ) |
 | `services/embeddings.py`, `services/similarity.py` | Векторы находок (`finding_embeddings`, pgvector), «Похожие», поиск по смыслу |
 | `authz/enforcer.py`, `authz/permissions.py`, `authz/rbac_model.conf` | Casbin: enforcer, каталог прав, модель |
@@ -62,9 +63,9 @@ Vulnerability management платформа: импорт находок без�
 | `services/risk_expiry.py` | Истечение принятого риска |
 | `services/sarif/` | `parser.py` (разбор + `versionControlProvenance`), `normalizers.py` (severity по сканерам) |
 | `services/audit.py` | `record_audit`, `snapshot`/`diff`, белые списки `FIELDS`, список действий |
-| `services/storage.py` | Хранилище SARIF: диск или S3/MinIO по `SV_STORAGE_BACKEND` |
-| `worker.py` | ARQ: `process_import`, `ai_triage_finding`, `embed_pending`; cron `expire_risks`, `embed_cron` |
-| `cli.py` | `create-admin`, `create-user`, `seed-roles` (там же список встроенных ролей) |
+| `services/storage.py` | Хранилище SARIF и файлов справочников (`save_stream`, `local_copy`): диск или S3/MinIO по `SV_STORAGE_BACKEND` |
+| `worker.py` | ARQ: `process_import`, `ai_triage_finding`, `embed_pending`, `load_intel`; cron `expire_risks`, `embed_cron` |
+| `cli.py` | `create-admin`, `create-user`, `seed-roles` (там же список встроенных ролей; грузит встроенный CWE), `backfill-intel` |
 | `tests/conftest.py`, `tests/factories.py` | Тестовая БД, фикстуры пользователей и клиента, фабрики данных |
 
 **Frontend (`frontend/src/`)**
@@ -112,6 +113,7 @@ Vulnerability management платформа: импорт находок без�
 - **Этап 7 «Встроенный ИИ»** — сделан, прошёл ревью, в `main`: LLM-клиент (`services/llm/`, `SV_AI_*`), промпт с защитой от prompt-injection и без секретов, авторазбор новых находок после импорта и кнопка «Разобрать ИИ» (право `finding:triage`; `finding:analyze` — только агентам), не больше одного разбора за раз в воркере, плитка «Согласие с ИИ» (`ai_agreement`, последний вывод агента, автозакрытие не считается решением). Проверка на живой модели — когда она будет.
 - **Этап 8 «Векторная база»** — сделан, прошёл ревью, в `main`: pgvector, `finding_embeddings` (`source_updated_at`), маскирование, `embed_pending` в воркере, `/findings/{id}/similar`, MCP `find_similar` и `search_findings(query)`, триажёр `triage-v2`; UI — блок «Похожие находки» в окне SV-N, «На основе похожих» в «Анализ ИИ». Открытое — `docs/stage8-handoff.md`. Проверка на живой модели (`bge-m3`) — когда будет. **Дальше — этап 9** (порядок — в спеке этапа 6).
 - **Этап 9 «Память команды»** — сделан (бэкенд + фронтенд): правила команды (`triage_memories`, право `memory:manage`), подсказка на находке и «Запросить по правилу», предложения после 3 одобренных решений, MCP `list_memories`, промпт `triage-v3`, страница `/memories`. Подробно — `docs/architecture.md`, раздел «Память команды»; открытое — `docs/stage9-handoff.md`.
+- **Этап 10 «Обогащение»** — бэкенд сделан (задачи 1–9 плана): справочники EPSS, CISA KEV, БДУ ФСТЭК, CWE (`intel_*`, право `intel:manage`, `POST /intel/{source}` → воркер `load_intel`), сводные поля находки (`cves`, `epss_max`, `kev`, `has_bdu`), блок `intel` в SV-N, фильтры, `cwe_category` в метриках, промпт `triage-v4`, MCP. **Дальше — фронтенд** (задачи 10–14), записка — `docs/stage10-handoff.md`; ревью — в конце этапа.
 - **Отложено, пока не попросят**: Helm/деплой (Dockerfile ещё нет — понадобятся при первом реальном деплое), конструктор дашборд-виджетов — `docs/superpowers/specs/2026-10-05-stage6-dashboard-widgets.md`.
 
 ## Документы
