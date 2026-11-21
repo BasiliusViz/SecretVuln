@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,6 +22,7 @@ class SarifResult:
     cwe: str | None
     raw: dict[str, Any]
     help: str | None = None
+    cves: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -49,6 +51,39 @@ def _extract_cwe(rule: dict[str, Any] | None) -> str | None:
         if tid.upper().startswith("CWE-"):
             return tid.upper()
     return None
+
+
+# длина ограничена: cve_id в БД — varchar(32)
+CVE_RE = re.compile(r"CVE-\d{4}-\d{4,20}(?!\d)", re.IGNORECASE)
+
+
+def _strings(value: Any):
+    """Все строки внутри значения (строка, список, словарь — рекурсивно), по порядку."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+
+
+def extract_cves(result: dict[str, Any], rule: dict[str, Any] | None) -> list[str]:
+    """CVE находки: ruleId, rule.id, теги и свойства правила, свойства result.
+
+    Верхний регистр, без дублей, по порядку. Текст сообщения не смотрим — там CVE
+    бывает упомянут для сравнения. GHSA без CVE не разрешаем.
+    """
+    sources: list[Any] = [result.get("ruleId")]
+    if rule:
+        sources += [rule.get("id"), rule.get("properties")]
+    sources.append(result.get("properties"))
+    seen: dict[str, None] = {}
+    for text in _strings(sources):
+        for m in CVE_RE.findall(text):
+            seen.setdefault(m.upper(), None)
+    return list(seen)
 
 
 def _compute_fingerprint(result: dict[str, Any], rule_id: str | None, file_path: str | None) -> str:
@@ -142,6 +177,7 @@ def parse_sarif(content: bytes) -> list[SarifRun]:
                 cwe=cwe,
                 raw=result,
                 help=_rule_help(rule),
+                cves=extract_cves(result, rule),
             ))
 
         runs.append(sarif_run)
