@@ -8,6 +8,16 @@ from app.models.finding import Finding, FindingStatus, Severity
 from app.models.finding_embedding import FindingEmbedding
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
 from app.models.import_ import Import, ImportStatus
+from app.models.intel import (
+    IntelBdu,
+    IntelBduCve,
+    IntelCwe,
+    IntelEpss,
+    IntelKev,
+    IntelSource,
+    IntelSourceState,
+    IntelStatus,
+)
 from app.models.ownership_rule import OwnershipRule, RuleSource
 from app.models.role import Role
 from app.models.role_binding import RoleBinding
@@ -52,4 +62,12 @@ __all__ = [
     "TriageMemory",
     "MemoryStatus",
     "MemorySource",
+    "IntelEpss",
+    "IntelKev",
+    "IntelBdu",
+    "IntelBduCve",
+    "IntelCwe",
+    "IntelSource",
+    "IntelSourceState",
+    "IntelStatus",
 ]

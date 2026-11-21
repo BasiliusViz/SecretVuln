@@ -8,7 +8,9 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -16,7 +18,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.ai_analysis import AiVerdict
@@ -71,6 +73,7 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
     __tablename__ = "findings"
     __table_args__ = (
         UniqueConstraint("entity_id", "fingerprint", name="uq_findings_entity_fingerprint"),
+        Index("ix_findings_cves", "cves", postgresql_using="gin"),
     )
 
     entity_id: Mapped[uuid.UUID] = mapped_column(
@@ -155,6 +158,18 @@ class Finding(Base, UUIDPKMixin, TimestampMixin):
     # Подсказка: правило команды, подходящее к находке (не больше одного, статус не меняет)
     memory_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("triage_memories.id", ondelete="SET NULL"), index=True
+    )
+
+    # Обогащение (этап 10): CVE из SARIF и сводные поля из справочников intel_*
+    cves: Mapped[list[str]] = mapped_column(
+        ARRAY(String(32)), default=list, server_default=text("'{}'"), nullable=False
+    )
+    epss_max: Mapped[float | None] = mapped_column(Float, index=True)
+    kev: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), index=True, nullable=False
+    )
+    has_bdu: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
     )
 
     entity = relationship("Entity", back_populates="findings")
