@@ -135,6 +135,7 @@ BUILTIN_ROLES: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("audit", "read"),
             ("token", "manage"),
             ("memory", "manage"),
+            ("intel", "manage"),
         ],
     ),
 }
@@ -161,7 +162,27 @@ async def seed_roles() -> None:
             set_role_permissions(name, perms)
             print(f"✓ роль «{name}» {action} ({len(perms)} прав)")
 
+        from app.services.intel.builtin import seed_builtin_cwe
+
+        loaded = await seed_builtin_cwe(db)
+        if loaded:
+            print(f"✓ справочник CWE загружен ({loaded} записей)")
+
     await engine.dispose()
+
+
+async def backfill_intel() -> None:
+    from app.services.intel.builtin import backfill_cves
+
+    async with async_session_factory() as db:
+        changed, updated = await backfill_cves(db)
+    await engine.dispose()
+    print(f"✓ CVE заполнены у {changed} уязвимостей, сводные поля обновлены у {updated}")
+
+
+def _cmd_backfill_intel(args: argparse.Namespace) -> int:
+    asyncio.run(backfill_intel())
+    return 0
 
 
 def _cmd_seed_roles(args: argparse.Namespace) -> int:
@@ -218,8 +239,14 @@ def main() -> int:
     pu.add_argument("--name")
     pu.set_defaults(func=_cmd_create_user)
 
-    ps = sub.add_parser("seed-roles", help="Создать встроенные роли с правами")
+    ps = sub.add_parser("seed-roles", help="Создать встроенные роли с правами и справочник CWE")
     ps.set_defaults(func=_cmd_seed_roles)
+
+    pb = sub.add_parser(
+        "backfill-intel",
+        help="Извлечь CVE у уже загруженных уязвимостей и пересчитать EPSS/KEV/БДУ (один раз)",
+    )
+    pb.set_defaults(func=_cmd_backfill_intel)
 
     args = parser.parse_args()
     return args.func(args)
