@@ -508,6 +508,11 @@ async def test_stale_hint_from_other_branch_is_ignored(client, db, admin):
     assert r.status_code == 422
     got = await agent_tools.get_finding(db, await _principal(db, user), "SV-20")
     assert got["memory"] is None
+    # REST: карточка и список тоже не отдают текст правила чужой ветки
+    r = await client.get(f"/api/v1/findings/{finding.id}", headers=h)
+    assert r.status_code == 200 and r.json()["memory"] is None
+    r = await client.get("/api/v1/findings", headers=h, params={"entity_id": str(b.id)})
+    assert [f["memory"] for f in r.json()] == [None]
 
 
 async def test_disabled_memory_text_not_shown_on_finding(client, db, admin):

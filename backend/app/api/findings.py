@@ -39,6 +39,7 @@ from app.schemas.finding import (
     NoisyRule,
 )
 from app.schemas.finding_event import FindingEventRead
+from app.services.access import in_prefix
 from app.services.ai_analyses import AnalysisError, analysis_of_finding
 from app.services.code_links import build_code_url, guess_repo_type
 from app.services.decisions import DecisionError, create_request
@@ -98,6 +99,33 @@ async def load_finding(db: AsyncSession, finding_id: uuid.UUID) -> Finding:
     )
 
 
+async def _memory_out_of_scope(db: AsyncSession, findings: list[Finding]) -> set[uuid.UUID]:
+    """Находки, чья подсказка указывает на правило не из проекта находки и не от предка
+    (устаревший `memory_id` до пересчёта) — текст такого правила не отдаём, как в `hint_in_scope`."""
+    hinted = [f for f in findings if f.memory is not None]
+    if not hinted:
+        return set()
+    ids = {f.entity_id for f in hinted} | {f.memory.entity_id for f in hinted}
+    paths = dict((await db.execute(
+        select(Entity.id, Entity.path_cache).where(Entity.id.in_(ids))
+    )).all())
+    out = set()
+    for f in hinted:
+        fp, mp = paths.get(f.entity_id), paths.get(f.memory.entity_id)
+        if fp is None or mp is None or not in_prefix(fp, mp):
+            out.add(f.id)
+    return out
+
+
+async def to_read(db: AsyncSession, findings: list[Finding]) -> list[FindingRead]:
+    hidden = await _memory_out_of_scope(db, findings)
+    return [
+        FindingRead.model_validate(f).model_copy(update={"memory": None})
+        if f.id in hidden else FindingRead.model_validate(f)
+        for f in findings
+    ]
+
+
 async def to_detail(db: AsyncSession, finding: Finding) -> FindingDetail:
     entity = await db.get(Entity, finding.entity_id)
     settings = await effective_settings(db, entity)
@@ -118,7 +146,9 @@ async def to_detail(db: AsyncSession, finding: Finding) -> FindingDetail:
         line=finding.line_start,
         path_prefix=settings["repo_path_prefix"]["value"],
     )
+    hide_memory = bool(await _memory_out_of_scope(db, [finding]))
     return FindingDetail.model_validate(finding).model_copy(update={
+        **({"memory": None} if hide_memory else {}),
         "entity_name": entity.name,
         "entity_path": entity.path_cache,
         "code_url": build_code_url(ref=finding.commit_sha, ref_is_commit=True, **common),
@@ -229,7 +259,7 @@ async def list_findings(
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_permission("finding", "read")),
     db: AsyncSession = Depends(get_db),
-) -> list[Finding]:
+) -> list[FindingRead]:
     q = await findings_query(
         db, principal,
         entity_id=entity_id, include_descendants=include_descendants, severity=severity,
@@ -239,7 +269,7 @@ async def list_findings(
         ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict, has_memory=has_memory, order=order,
     )
     result = await db.scalars(q.offset(offset).limit(limit))
-    return list(result)
+    return await to_read(db, list(result))
 
 
 @router.get("/findings/stats")
@@ -379,7 +409,7 @@ async def update_finding_status(
             payload={"ai_analysis_id": str(analysis.id)} if analysis else None,
         )
         await db.commit()
-    return await load_finding(db, finding.id)
+    return (await to_read(db, [await load_finding(db, finding.id)]))[0]
 
 
 @router.post("/findings/{finding_id}/assign", response_model=FindingRead)
@@ -416,7 +446,7 @@ async def assign_finding(
     )
     finding.assignee_group_id = new_group
     await db.commit()
-    return await load_finding(db, finding.id)
+    return (await to_read(db, [await load_finding(db, finding.id)]))[0]
 
 
 CLOSED_FOR_HELP = {FindingStatus.fixed, *DECISION_STATUSES}
