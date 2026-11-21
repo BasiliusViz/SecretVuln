@@ -81,7 +81,9 @@ async def search_findings(
     overdue: bool = False,
     ai_verdict: list[AiVerdict] | None = None,
     no_ai_verdict: bool = False,
-    order: Literal["last_seen", "severity", "number", "due_at"] = "last_seen",
+    kev: bool | None = None,
+    min_epss: float | None = None,
+    order: Literal["last_seen", "severity", "number", "due_at", "epss_max"] = "last_seen",
     limit: int = 50,
     offset: int = 0,
     query: str | None = None,
@@ -89,6 +91,8 @@ async def search_findings(
     """Найти уязвимости (видны только доступные токену). Фильтры как в списке, лимит 100.
 
     entity_id — проект вместе с подпроектами; no_ai_verdict — ещё без вердикта ИИ.
+    kev=true — только эксплуатируемые в атаках (каталог CISA KEV); min_epss — EPSS от 0 до 1
+    (вероятность эксплуатации в ближайшие 30 дней); order=epss_max — сначала самые вероятные.
     query — поиск по смыслу (текст на любом языке): сортировка по близости, в ответе
     similarity 0–1. Работает, только если в SecretVuln включены векторы. offset при query
     приблизительный (поиск по индексу неточен на стыке страниц) — лучше одна страница с limit.
@@ -97,7 +101,7 @@ async def search_findings(
         db, p,
         entity_id=_uuid(entity_id), severity=severity, statuses=status, scanner=scanner,
         tag=tag, overdue=overdue, ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict,
-        order=order, limit=limit, offset=offset, query=query,
+        kev=kev, min_epss=min_epss, order=order, limit=limit, offset=offset, query=query,
     ))
 
 
@@ -114,7 +118,8 @@ async def find_similar(ctx: Context, finding: str, k: int = 5) -> dict:
 @server.tool()
 async def get_finding(ctx: Context, finding: str) -> dict:
     """Уязвимость целиком: поля, история, выводы ИИ, repo_url и ветка проекта,
-    правило команды-подсказка (memory), если оно подошло.
+    правило команды-подсказка (memory), если оно подошло, и справочные данные (intel):
+    CWE с категорией, по каждому CVE — EPSS, CISA KEV, БДУ ФСТЭК; stale — устаревшие источники.
 
     finding — UUID или номер (`SV-123`).
     """

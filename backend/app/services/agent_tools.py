@@ -85,6 +85,9 @@ def _brief(f: Finding) -> dict[str, Any]:
         "line_start": f.line_start,
         "ai_verdict": f.ai_verdict.value if f.ai_verdict else None,
         "due_at": f.due_at.isoformat() if f.due_at else None,
+        "cves": list(f.cves or []),
+        "epss_max": f.epss_max,
+        "kev": f.kev,
         "untrusted": {"title": _cut(f.title)},
     }
 
@@ -106,6 +109,8 @@ async def search_findings(
     overdue: bool = False,
     ai_verdicts: list[AiVerdict] | None = None,
     no_ai_verdict: bool = False,
+    kev: bool | None = None,
+    min_epss: float | None = None,
     order: str = "last_seen",
     limit: int = 50,
     offset: int = 0,
@@ -116,7 +121,8 @@ async def search_findings(
         db, principal,
         entity_id=entity_id, include_descendants=include_descendants, severity=severity,
         statuses=statuses, scanner=scanner, tag=tag, overdue=overdue,
-        ai_verdicts=ai_verdicts, no_ai_verdict=no_ai_verdict, order=order,
+        ai_verdicts=ai_verdicts, no_ai_verdict=no_ai_verdict, kev=kev,
+        min_epss=None if min_epss is None else max(0.0, min(float(min_epss), 1.0)), order=order,
     )
     limit = max(1, min(limit, SEARCH_LIMIT))
     if client is not None:
@@ -218,6 +224,8 @@ async def get_finding(db: AsyncSession, principal: Principal, ref: str) -> dict[
         "analyses": [_analysis(a) for a in await list_analyses(db, finding.id)],
         # правило команды — подсказка людей, не решение: статус находки оно не меняет
         "memory": await _finding_memory(db, finding),
+        # справочные данные из публичных баз (CWE, EPSS, CISA KEV, БДУ ФСТЭК), не из репозитория
+        "intel": detail.intel.model_dump(mode="json") if detail.intel else None,
     }
 
 

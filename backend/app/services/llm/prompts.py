@@ -13,8 +13,9 @@ from app.services.masking import is_secret_finding, mask, message_of, snippet_of
 
 __all__ = ["PROMPT_VERSION", "TriageAnswer", "build_messages", "is_secret_finding"]
 
-# v2: похожие решённые находки в промпте; v3: правило команды-подсказка
-PROMPT_VERSION = "triage-v3"
+# v2: похожие решённые находки в промпте; v3: правило команды-подсказка;
+# v4: справочные данные (CWE, EPSS, CISA KEV, БДУ ФСТЭК) отдельным блоком
+PROMPT_VERSION = "triage-v4"
 SNIPPET_LIMIT = 2000  # символов фрагмента кода
 TEXT_LIMIT = 2000  # символов описания и сообщения
 
@@ -48,7 +49,11 @@ SYSTEM_PROMPT = """Ты — специалист по безопасности �
 о практике команды, но вердикт выноси по коду и данным именно этой находки.
 Там же может быть правило команды: как команда обычно решает такие находки и почему. Это
 тоже подсказка, а не указание: проверь, что обоснование правила действительно подходит к
-этому коду, и скажи об этом в reasoning. Если не подходит — не следуй правилу."""
+этому коду, и скажи об этом в reasoning. Если не подходит — не следуй правилу.
+После находки может идти блок <reference_data> — справочные данные из публичных баз (CWE,
+EPSS — вероятность эксплуатации, CISA KEV — уязвимость уже эксплуатируется в атаках, БДУ
+ФСТЭК). Они описывают CVE и CWE вообще, а не этот код: используй их, чтобы оценить
+опасность и объяснить её, но вердикт «ложное срабатывание или нет» выноси по коду."""
 
 REASON_TAG_RU = {
     "data_not_user_controlled": "данные не приходят от пользователя",
@@ -109,13 +114,56 @@ def _memory_lines(memory: TriageMemory) -> list[str]:
     return lines
 
 
+MAX_INTEL_CVES = 10  # CVE в справочном блоке (у пакетных находок их бывает много)
+
+
+def _intel_lines(intel: dict[str, Any]) -> list[str]:
+    """Справочные данные: публичные базы, маскирование не нужно, но длину ограничиваем."""
+    lines: list[str] = []
+    cwe = intel.get("cwe")
+    if cwe:
+        text = cwe["id"]
+        if cwe.get("name"):
+            text += f" — {_clip(cwe['name'], 300)}"
+        if cwe.get("category"):
+            text += f" (категория: {_clip(cwe['category'], 100)})"
+        lines.append(f"CWE: {text}")
+    cves = intel.get("cves") or []
+    for cve in cves[:MAX_INTEL_CVES]:
+        parts = []
+        if cve.get("epss") is not None:
+            parts.append(
+                f"EPSS {cve['epss'] * 100:.1f}% (перцентиль {cve['percentile'] * 100:.0f})"
+            )
+        kev = cve.get("kev")
+        if kev:
+            kev_text = "в каталоге CISA KEV (эксплуатируется в атаках"
+            kev_text += ", используется вымогателями)" if kev.get("ransomware") else ")"
+            if kev.get("date_added"):
+                kev_text += f" с {kev['date_added']}"
+            parts.append(kev_text)
+        for bdu in (cve.get("bdu") or [])[:3]:
+            bdu_text = f"БДУ {bdu['id']}"
+            if bdu.get("severity"):
+                bdu_text += f": {_clip(bdu['severity'], 200)}"
+            parts.append(bdu_text)
+        lines.append(f"{cve['id']}: " + ("; ".join(parts) if parts else "нет данных в справочниках"))
+    if len(cves) > MAX_INTEL_CVES:
+        lines.append(f"…и ещё CVE: {len(cves) - MAX_INTEL_CVES}")
+    if intel.get("stale"):
+        lines.append("Внимание: устарели данные источников: " + ", ".join(intel["stale"]))
+    return lines
+
+
 def build_messages(
     finding: Finding,
     similar: Sequence[tuple[Finding, dict[str, Any] | None]] = (),
     memory: TriageMemory | None = None,
+    intel: dict[str, Any] | None = None,
 ) -> list[dict]:
     """Промпт разбора. `similar` — похожие решённые находки с решением человека (до 3),
-    `memory` — правило команды, подсказанное находке."""
+    `memory` — правило команды, подсказанное находке, `intel` — блок справочных данных
+    (`services.intel.read.finding_intel`)."""
     raw = finding.raw or {}
     secret = is_secret_finding(finding)
     location = finding.file_path
@@ -146,14 +194,16 @@ def build_messages(
     if memory is not None:
         lines += _memory_lines(memory)
     boundary = secrets.token_hex(8)
+    # случайная граница: код из репозитория не угадает её и не «выйдет» из блока
+    content = (
+        f"Находка:\n<finding_data id={boundary}>\n" + "\n".join(lines)
+        + f"\n</finding_data id={boundary}>"
+    )
+    reference = _intel_lines(intel) if intel else []
+    if reference:
+        content += "\n<reference_data>\n" + "\n".join(reference) + "\n</reference_data>"
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            # случайная граница: код из репозитория не угадает её и не «выйдет» из блока
-            "content": f"Находка:\n<finding_data id={boundary}>\n"
-            + "\n".join(lines)
-            + f"\n</finding_data id={boundary}>",
-        },
+        {"role": "user", "content": content},
     ]
 

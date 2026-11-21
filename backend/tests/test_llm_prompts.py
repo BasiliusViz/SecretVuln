@@ -52,7 +52,7 @@ def _user_text(messages: list[dict]) -> str:
 
 
 def test_prompt_version():
-    assert PROMPT_VERSION == "triage-v3"
+    assert PROMPT_VERSION == "triage-v4"
 
 
 def test_team_memory_goes_inside_untrusted_block():
@@ -179,3 +179,33 @@ def test_prompt_masks_secrets_in_regular_finding():
     assert key not in text
     assert "[MASKED]" in text
     assert "boto3.client" in text
+
+
+INTEL = {
+    "cwe": {"id": "CWE-89", "name": "SQL Injection", "category": "Injection"},
+    "cves": [
+        {"id": "CVE-2021-44228", "epss": 0.94358, "percentile": 0.9996,
+         "kev": {"date_added": "2021-12-10", "due_date": None, "name": "x", "ransomware": True},
+         "bdu": [{"id": "BDU:2021-05969", "name": "Log4j", "severity": "Критический"}]},
+        {"id": "CVE-2099-0001", "epss": None, "percentile": None, "kev": None, "bdu": []},
+    ],
+    "stale": ["kev"],
+    "sources": {},
+}
+
+
+def test_intel_goes_to_reference_block_outside_finding_data():
+    text = _user_text(build_messages(_finding(), intel=INTEL))
+    finding_part, reference = text.split("<reference_data>")
+    assert "</finding_data" in finding_part and "EPSS" not in finding_part
+    assert "CWE-89 — SQL Injection (категория: Injection)" in reference
+    assert "CVE-2021-44228: EPSS 94.4% (перцентиль 100)" in reference
+    assert "CISA KEV" in reference and "вымогател" in reference
+    assert "БДУ BDU:2021-05969: Критический" in reference
+    assert "CVE-2099-0001: нет данных в справочниках" in reference
+    assert "устарели данные источников: kev" in reference
+    assert reference.rstrip().endswith("</reference_data>")
+
+
+def test_no_reference_block_without_intel():
+    assert "<reference_data>" not in _user_text(build_messages(_finding()))
