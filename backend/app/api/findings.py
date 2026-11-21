@@ -25,8 +25,10 @@ from app.models.decision_request import DecisionType
 from app.models.entity import RepoType
 from app.models.finding import OPEN_STATUSES, FindingStatus, Severity
 from app.models.finding_event import ActorType, FindingEvent, FindingEventType
+from app.models.intel import IntelCwe
 from app.schemas.decision import DecisionCreate
 from app.schemas.finding import (
+    FindingIntel,
     BulkAction,
     BulkResult,
     BulkSkipped,
@@ -48,6 +50,7 @@ from app.services.entity_settings import effective_settings
 from app.services.entity_tree import entities_with_tag
 from app.services.events import record_event
 from app.services.finding_state import set_status
+from app.services.intel.read import finding_intel
 from app.services.noisy_rules import noisy_rules
 from app.services.ownership import build_resolver
 from app.services.similarity import find_similar
@@ -147,7 +150,9 @@ async def to_detail(db: AsyncSession, finding: Finding) -> FindingDetail:
         path_prefix=settings["repo_path_prefix"]["value"],
     )
     hide_memory = bool(await _memory_out_of_scope(db, [finding]))
+    intel = await finding_intel(db, finding)
     return FindingDetail.model_validate(finding).model_copy(update={
+        "intel": FindingIntel.model_validate(intel) if intel else None,
         **({"memory": None} if hide_memory else {}),
         "entity_name": entity.name,
         "entity_path": entity.path_cache,
@@ -177,6 +182,10 @@ async def findings_query(
     ai_verdicts: list[AiVerdict] | None = None,
     no_ai_verdict: bool = False,
     has_memory: bool | None = None,
+    kev: bool | None = None,
+    min_epss: float | None = None,
+    has_bdu: bool | None = None,
+    cwe_category: str | None = None,
     order: str = "last_seen",
 ):
     """Запрос списка находок с фильтрами — общий для REST и MCP."""
@@ -209,6 +218,16 @@ async def findings_query(
         q = q.where(
             Finding.memory_id.is_not(None) if has_memory else Finding.memory_id.is_(None)
         )
+    if kev is not None:
+        q = q.where(Finding.kev.is_(kev))
+    if min_epss is not None:
+        q = q.where(Finding.epss_max >= min_epss)
+    if has_bdu is not None:
+        q = q.where(Finding.has_bdu.is_(has_bdu))
+    if cwe_category:
+        q = q.where(func.upper(Finding.cwe).in_(
+            select(IntelCwe.cwe_id).where(IntelCwe.category == cwe_category)
+        ))
     if pending_decision:
         q = q.where(
             select(DecisionRequest.id)
@@ -232,6 +251,8 @@ async def findings_query(
         q = q.order_by(Finding.number.desc())
     elif order == "due_at":
         q = q.order_by(Finding.due_at.asc().nulls_last(), Finding.number)
+    elif order == "epss_max":
+        q = q.order_by(Finding.epss_max.desc().nulls_last(), Finding.number.desc())
     else:
         q = q.order_by(Finding.last_seen.desc())
     return q
@@ -254,7 +275,11 @@ async def list_findings(
     ai_verdict: list[AiVerdict] | None = Query(None),
     no_ai_verdict: bool = False,
     has_memory: bool | None = None,
-    order: Literal["last_seen", "severity", "number", "due_at"] = "last_seen",
+    kev: bool | None = None,
+    min_epss: float | None = Query(None, ge=0, le=1),
+    has_bdu: bool | None = None,
+    cwe_category: str | None = Query(None, max_length=200),
+    order: Literal["last_seen", "severity", "number", "due_at", "epss_max"] = "last_seen",
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
     principal: Principal = Depends(require_permission("finding", "read")),
@@ -266,7 +291,8 @@ async def list_findings(
         statuses=finding_status, scanner=scanner, assignee_group_id=assignee_group_id,
         unassigned=unassigned, mine=mine, help_requested=help_requested,
         pending_decision=pending_decision, overdue=overdue, tag=tag,
-        ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict, has_memory=has_memory, order=order,
+        ai_verdicts=ai_verdict, no_ai_verdict=no_ai_verdict, has_memory=has_memory,
+        kev=kev, min_epss=min_epss, has_bdu=has_bdu, cwe_category=cwe_category, order=order,
     )
     result = await db.scalars(q.offset(offset).limit(limit))
     return await to_read(db, list(result))

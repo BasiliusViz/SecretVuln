@@ -8,7 +8,9 @@ from app.models.finding import Severity
 Metric = Literal[
     "count", "opened", "resolved", "overdue", "sla_ratio", "mttr_days", "ai_agreement"
 ]
-GroupBy = Literal["none", "severity", "scanner", "team", "entity", "week", "ai_agent", "ai_model"]
+GroupBy = Literal[
+    "none", "severity", "scanner", "team", "entity", "week", "ai_agent", "ai_model", "cwe_category"
+]
 Period = Literal["7d", "30d", "90d", "365d"]
 
 
@@ -20,6 +22,8 @@ class MetricFilters(BaseModel):
     # проект вместе с поддеревом
     entity_id: uuid.UUID | None = None
     tag: str | None = Field(default=None, max_length=64)
+    # true — только находки из каталога CISA KEV, false — только вне его
+    kev: bool | None = None
 
 
 class MetricQuery(BaseModel):

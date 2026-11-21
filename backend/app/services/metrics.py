@@ -32,7 +32,15 @@ from sqlalchemy import Float, and_, case, cast, func, literal, or_, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AiAnalysis, AiAnalysisKind, Entity, Finding, FindingEvent, UserGroup
+from app.models import (
+    AiAnalysis,
+    AiAnalysisKind,
+    Entity,
+    Finding,
+    FindingEvent,
+    IntelCwe,
+    UserGroup,
+)
 from app.models.ai_analysis import AiReviewStatus, AiVerdict
 from app.models.finding import CLOSED_STATUSES, OPEN_STATUSES, FindingStatus
 from app.models.finding_event import FindingEventType
@@ -65,6 +73,7 @@ GROUP_COLUMN = {
     "entity": Finding.entity_id,
     "ai_agent": AiAnalysis.agent,
     "ai_model": AiAnalysis.model,
+    "cwe_category": IntelCwe.category,  # через LEFT JOIN intel_cwe по findings.cwe
 }
 
 # Статусы, которыми человек подтвердил, что уязвимость настоящая
@@ -167,6 +176,8 @@ async def _filter_conditions(db: AsyncSession, query: MetricQuery) -> list:
         )
     if f.tag:
         conds.append(Finding.entity_id.in_(entities_with_tag(f.tag.strip().lower())))
+    if f.kev is not None:
+        conds.append(Finding.kev.is_(f.kev))
     return conds
 
 
@@ -210,6 +221,10 @@ async def aggregate(
         q = q.select_from(Finding).join(FindingEvent, FindingEvent.finding_id == Finding.id)
     elif is_ai:
         q = q.select_from(Finding).join(AiAnalysis, AiAnalysis.finding_id == Finding.id)
+    else:
+        q = q.select_from(Finding)
+    if query.group_by == "cwe_category":
+        q = q.outerjoin(IntelCwe, IntelCwe.cwe_id == func.upper(Finding.cwe))
     q = q.where(*conds).group_by(group)
     if query.group_by == "week":
         q = q.order_by(group.desc())

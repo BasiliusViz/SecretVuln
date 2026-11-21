@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -69,6 +69,11 @@ class FindingRead(BaseModel):
     ai_verdict: str | None = None
     memory_id: uuid.UUID | None = None
     memory: MemoryBrief | None = None
+    # обогащение: CVE из SARIF и сводные поля справочников
+    cves: list[str] = []
+    epss_max: float | None = None
+    kev: bool = False
+    has_bdu: bool = False
 
     @field_validator("memory", mode="before")
     @classmethod
@@ -94,6 +99,42 @@ class FindingAssign(BaseModel):
     by_rules: bool = False
 
 
+class IntelCwe(BaseModel):
+    id: str
+    name: str | None = None
+    category: str | None = None
+
+
+class IntelKevBrief(BaseModel):
+    date_added: date | None = None
+    due_date: date | None = None
+    name: str | None = None
+    ransomware: bool = False
+
+
+class IntelBduBrief(BaseModel):
+    id: str
+    name: str | None = None
+    severity: str | None = None
+
+
+class IntelCve(BaseModel):
+    id: str
+    epss: float | None = None
+    percentile: float | None = None
+    kev: IntelKevBrief | None = None
+    bdu: list[IntelBduBrief] = []
+
+
+class FindingIntel(BaseModel):
+    """Справочные данные находки (блок «Угрозы» в окне SV-N)."""
+
+    cwe: IntelCwe | None = None
+    cves: list[IntelCve] = []
+    stale: list[str] = []  # источники с устаревшим файлом: epss, kev
+    sources: dict[str, date | None] = {}  # дата файла каждого источника
+
+
 class FindingDetail(FindingRead):
     """Карточка для окна уязвимости: адрес проекта, ссылки на код, рекомендация сканера."""
 
@@ -102,6 +143,7 @@ class FindingDetail(FindingRead):
     code_url: str | None = None
     code_url_head: str | None = None
     help_text: str | None = None
+    intel: FindingIntel | None = None
 
 
 class CommentCreate(BaseModel):
