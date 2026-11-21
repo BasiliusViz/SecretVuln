@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "sarif-imports"
 
+    # Справочники обогащения (EPSS, KEV, БДУ, CWE): предельный размер загружаемого файла
+    intel_max_mb: int = 1024
+
     # Auth
     # ВАЖНО: в проде задать свой (>=32 байт) через SV_JWT_SECRET
     jwt_secret: str = "dev-only-secret-change-me-in-production-0123456789"

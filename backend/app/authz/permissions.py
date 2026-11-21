@@ -26,6 +26,7 @@ CATALOG: dict[str, list[str]] = {
     "audit": ["read"],
     "token": ["manage"],
     "memory": ["manage"],
+    "intel": ["manage"],
 }
 
 RESOURCES: list[str] = list(CATALOG.keys())
@@ -35,7 +36,7 @@ ACTIONS: list[str] = [
 
 GLOBAL_ONLY: frozenset[str] = frozenset(
     {"group:write", "group:delete", "role:read", "role:write", "role:delete", "sla:manage",
-     "token:manage"}
+     "token:manage", "intel:manage"}
 )
 ANY_BINDING: frozenset[str] = frozenset({"group:read", "sla:read"})
 

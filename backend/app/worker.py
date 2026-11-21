@@ -15,8 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.config import get_settings
 from app.models.import_ import Import, ImportStatus
-from app.services import builtin_triage, embeddings
+from app.models.intel import IntelSource, IntelStatus
+from app.services import builtin_triage, embeddings, storage
 from app.services.import_processing import ImportRejected, apply_import
+from app.services.intel.loader import get_state, load_source
 from app.services.llm import LlmError
 from app.services.risk_expiry import expire_risk_acceptances
 from app.services.storage import load_sarif
@@ -32,6 +34,7 @@ AI_CONCURRENCY = 1
 AI_RETRY_DEFER = 15
 AI_MAX_TRIES = 1000  # ~4 часа ожидания очереди по 15 с
 _ai_slots = asyncio.Semaphore(AI_CONCURRENCY)
+INTEL_JOB_TIMEOUT = 3600
 
 
 def ai_job_id(finding_id) -> str:
@@ -161,6 +164,31 @@ async def expire_risks(ctx: dict) -> None:
     logger.info("Risk expiry: %d findings reopened", reopened)
 
 
+async def load_intel(ctx: dict, source: str, storage_key: str, user_id: str | None) -> None:
+    """Загрузка файла справочника: замена таблицы, пересчёт находок, аудит. Файл потом удаляется."""
+    session_factory: async_sessionmaker = ctx["session_factory"]
+    src = IntelSource(source)
+    try:
+        with storage.local_copy(storage_key) as path:
+            async with session_factory() as db:
+                state = await load_source(
+                    db, src, path, user_id=uuid.UUID(user_id) if user_id else None
+                )
+        logger.info("Intel %s: %s", source, state.status.value)
+    except Exception:  # файл не достали из хранилища — источник не должен висеть в loading
+        logger.exception("Intel %s: load job failed", source)
+        async with session_factory() as db:
+            state = await get_state(db, src)
+            state.status = IntelStatus.failed
+            state.error = "Не удалось прочитать загруженный файл из хранилища"
+            await db.commit()
+    finally:
+        try:
+            storage.delete(storage_key)
+        except Exception:
+            logger.warning("Intel %s: could not delete %s", source, storage_key)
+
+
 async def startup(ctx: dict) -> None:
     settings = get_settings()
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
@@ -185,6 +213,8 @@ class WorkerSettings:
             timeout=3 * get_settings().ai_timeout + 60,  # вектор + разбор с повтором
         ),
         func(embed_pending, keep_result=0, max_tries=1, timeout=1800),
+        # большой файл БДУ/EPSS + пересчёт всех находок; повтор не нужен — статус failed
+        func(load_intel, keep_result=0, max_tries=1, timeout=INTEL_JOB_TIMEOUT),
     ]
     cron_jobs = [
         cron(expire_risks, hour={3}, minute={0}),
@@ -217,3 +247,11 @@ async def enqueue_ai_triage(finding_id: str) -> bool:
         _pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     job = await _pool.enqueue_job("ai_triage_finding", finding_id, _job_id=ai_job_id(finding_id))
     return job is not None
+
+
+async def enqueue_intel(source: str, storage_key: str, user_id: str | None) -> None:
+    global _pool
+    if _pool is None:
+        settings = get_settings()
+        _pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    await _pool.enqueue_job("load_intel", source, storage_key, user_id)

@@ -34,6 +34,8 @@ EXEMPT: dict[tuple[str, str], str] = {
     ("POST", "/api/v1/decisions/{decision_id}/reject"): _DECISIONS,
     ("POST", "/api/v1/findings/{finding_id}/analyses"): _AI,
     ("POST", "/api/v1/analyses/{analysis_id}/review"): _AI,
+    ("POST", "/api/v1/intel/{source}"): "файл разбирает воркер load_intel — он пишет intel.load "
+    "с итогом загрузки или ошибкой",
 }
 
 
