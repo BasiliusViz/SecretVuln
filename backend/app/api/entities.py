@@ -24,6 +24,7 @@ from app.services.entity_paths import (
 )
 from app.services.entity_tree import default_policy, effective_sla
 from app.services.finding_state import recompute_due
+from app.services.memories import recompute_subtree
 
 router = APIRouter(prefix="/api/v1/entities", tags=["entities"])
 
@@ -258,7 +259,10 @@ async def update_entity(
         if moved:
             # унаследованная политика SLA могла смениться у всего поддерева
             await db.flush()
-            await recompute_due(db, entity_ids=list(await db.scalars(subtree_ids(entity))))
+            subtree = list(await db.scalars(subtree_ids(entity)))
+            await recompute_due(db, entity_ids=subtree)
+            # правила команды предков сменились — подсказки поддерева тоже
+            await recompute_subtree(db, subtree, actor_id=principal.user.id)
         await db.commit()
     except IntegrityError:
         await db.rollback()

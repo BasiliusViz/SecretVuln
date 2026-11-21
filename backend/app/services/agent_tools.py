@@ -31,6 +31,7 @@ from app.models import (
     Entity,
     Finding,
     FindingStatus,
+    MemoryStatus,
     Severity,
     TriageMemory,
 )
@@ -244,7 +245,14 @@ async def _finding_memory(db: AsyncSession, finding: Finding) -> dict[str, Any] 
             .where(TriageMemory.id == finding.memory_id)
         )
     ).first()
-    return _memory(*row) if row else None
+    # правило не из ветки находки (устаревшая подсказка) — не показываем его текст
+    if (
+        row is None
+        or row[0].status != MemoryStatus.approved
+        or not await memories.hint_in_scope(db, finding, row[0])
+    ):
+        return None
+    return _memory(*row)
 
 
 async def list_memories(db: AsyncSession, principal: Principal, project: str) -> dict[str, Any]:

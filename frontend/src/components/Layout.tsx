@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import { apiJson } from "../api/json";
+import { MEMORIES_CHANGED } from "../api/types";
 import { useAuth, useCan } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { THEMES, isThemeId } from "../theme/themes";
@@ -12,6 +15,7 @@ const NAV_ITEMS: { to: string; key: string; end?: boolean; perm?: string }[] = [
   { to: "/projects", key: "nav.projects" },
   { to: "/vulnerabilities", key: "nav.vulns" },
   { to: "/imports", key: "nav.imports" },
+  { to: "/memories", key: "nav.memories", perm: "finding:read" },
   { to: "/sla", key: "nav.sla", perm: "sla:read" },
   { to: "/groups", key: "nav.groups" },
   { to: "/roles", key: "nav.rolesNav" },
@@ -24,6 +28,29 @@ export function Layout() {
   const { theme, setTheme } = useTheme();
   const { user, logout } = useAuth();
   const can = useCan();
+  const { pathname } = useLocation();
+  // Предложенные правила команды, которые пользователь может утвердить, — счётчик в меню
+  const canManageMemories = can("memory:manage");
+  const [suggested, setSuggested] = useState(0);
+
+  useEffect(() => {
+    if (!canManageMemories) {
+      setSuggested(0);
+      return;
+    }
+    let stale = false;
+    const refresh = () =>
+      void apiJson<unknown[]>("/api/v1/memories?status=suggested&manageable=true&limit=100").then((r) => {
+        if (!stale) setSuggested(r.data?.length ?? 0);
+      });
+    refresh();
+    window.addEventListener(MEMORIES_CHANGED, refresh);
+    return () => {
+      stale = true;
+      window.removeEventListener(MEMORIES_CHANGED, refresh);
+    };
+    // pathname: предложение появляется после одобрения запроса на другой странице
+  }, [canManageMemories, pathname]);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
@@ -73,6 +100,22 @@ export function Layout() {
             })}
           >
             {t(item.key)}
+            {item.to === "/memories" && suggested > 0 && (
+              <span
+                aria-label={t("nav.memoriesSuggested", { count: suggested })}
+                title={t("nav.memoriesSuggested", { count: suggested })}
+                style={{
+                  marginLeft: 6,
+                  padding: "1px 6px",
+                  borderRadius: 99,
+                  fontSize: 11,
+                  background: "var(--accent)",
+                  color: "var(--on-accent)",
+                }}
+              >
+                {suggested >= 100 ? "99+" : suggested}
+              </span>
+            )}
           </NavLink>
         ))}
         <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8 }}>

@@ -12,6 +12,7 @@ import { Groups } from "./pages/Groups";
 import { Imports } from "./pages/Imports";
 import { Inbox } from "./pages/Inbox";
 import { Login } from "./pages/Login";
+import { Memories } from "./pages/Memories";
 import { MyVulns } from "./pages/MyVulns";
 import { ProjectSettings } from "./pages/ProjectSettings";
 import { Roles } from "./pages/Roles";
@@ -59,6 +60,7 @@ export function App() {
               <Route path="groups" element={<Groups />} />
               <Route path="roles" element={<Roles />} />
               <Route path="sla" element={<SlaPolicies />} />
+              <Route path="memories" element={<Memories />} />
               <Route path="audit" element={<Audit />} />
               <Route path="service-accounts" element={<ServiceAccounts />} />
               {/* старые адреса — чтобы не ломались сохранённые ссылки */}

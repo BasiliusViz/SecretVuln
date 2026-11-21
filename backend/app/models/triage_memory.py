@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,6 +35,7 @@ class TriageMemory(Base, UUIDPKMixin, TimestampMixin):
             "OR path_glob IS NOT NULL",
             name="ck_triage_memories_condition",
         ),
+        Index("ux_triage_memories_suggest_key", "suggest_key", unique=True),
     )
 
     # Область: проект и всё его поддерево
@@ -70,3 +71,6 @@ class TriageMemory(Base, UUIDPKMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Происхождение предложения: (проект, сканер, правило сканера, решение), откуда оно
+    # родилось. Не меняется при правке и переносе — повторно то же не предлагается.
+    suggest_key: Mapped[str | None] = mapped_column(String(800))

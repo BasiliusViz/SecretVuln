@@ -18,16 +18,22 @@ export interface DecisionBody {
  */
 export function DecisionDialog({
   mode,
+  initial,
+  note,
   onSubmit,
   onClose,
 }: {
   mode: DecisionBody["decision_type"];
+  /** Заполнить форму заранее — запрос «по правилу команды» */
+  initial?: { reason_tag?: ReasonTag | null; reason?: string | null };
+  /** Пояснение над формой: откуда взялись значения */
+  note?: string;
   onSubmit: (body: DecisionBody) => Promise<string | null>;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [tag, setTag] = useState<ReasonTag>("data_not_user_controlled");
-  const [reason, setReason] = useState("");
+  const [tag, setTag] = useState<ReasonTag>(initial?.reason_tag ?? "data_not_user_controlled");
+  const [reason, setReason] = useState(initial?.reason ?? "");
   const [expires, setExpires] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -51,6 +57,7 @@ export function DecisionDialog({
   return (
     <Modal title={t(mode === "false_positive" ? "decision.fpTitle" : "decision.riskTitle")} onClose={onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {note && <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>{note}</p>}
         {mode === "false_positive" ? (
           <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             <legend style={{ fontSize: 13, marginBottom: 6 }}>{t("decision.reasonTag")}</legend>

@@ -85,22 +85,32 @@ export function ProjectSettings() {
     if (s.warnings.length > 0) setMessage(s.warnings.join("; "));
   }, []);
 
-  const load = useCallback(async () => {
-    const [e, s] = await Promise.all([
-      apiJson<EntityNode>(`/api/v1/entities/${id}`),
-      apiJson<EntitySettings>(`/api/v1/entities/${id}/settings`),
-    ]);
-    if (!e.ok || !e.data || !s.ok || !s.data) {
-      setLoadError(e.status === 404 ? t("common.notFound") : t("common.error"));
-      return;
-    }
-    setEntity(e.data);
-    setSlug(e.data.slug);
-    apply(s.data);
-  }, [id, t, apply]);
+  const load = useCallback(
+    async (isStale: () => boolean = () => false) => {
+      const [e, s] = await Promise.all([
+        apiJson<EntityNode>(`/api/v1/entities/${id}`),
+        apiJson<EntitySettings>(`/api/v1/entities/${id}/settings`),
+      ]);
+      if (isStale()) return;
+      if (!e.ok || !e.data || !s.ok || !s.data) {
+        setLoadError(e.status === 404 ? t("common.notFound") : t("common.error"));
+        return;
+      }
+      setEntity(e.data);
+      setSlug(e.data.slug);
+      apply(s.data);
+    },
+    [id, t, apply],
+  );
 
   useEffect(() => {
-    void load();
+    // Ответ отменённой загрузки (повторный запуск эффекта, смена проекта) не применяем:
+    // пришёл бы поздно и затёр черновик, который пользователь уже начал править
+    let stale = false;
+    void load(() => stale);
+    return () => {
+      stale = true;
+    };
   }, [load]);
 
   const canSeeGroups = can("group:read");

@@ -3,7 +3,15 @@ import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 
 import { apiJson } from "../api/json";
-import { OPEN_STATUSES, type AiAnalysis, type Decision, type FindingDetail, type FindingEvent, type Group } from "../api/types";
+import {
+  OPEN_STATUSES,
+  type AiAnalysis,
+  type Decision,
+  type FindingDetail,
+  type FindingEvent,
+  type Group,
+  type Memory,
+} from "../api/types";
 import { useCan } from "../auth/AuthContext";
 import { AiAnalyses } from "../components/AiAnalyses";
 import { DecisionDialog, type DecisionBody } from "../components/DecisionDialog";
@@ -29,6 +37,9 @@ export function FindingWindow() {
   // Обычная панель действий ссылку не ставит и сбрасывает предложение.
   const [aiBasis, setAiBasis] = useState<AiAnalysis | null>(null);
   const [dialogFromAi, setDialogFromAi] = useState(false);
+  // Правило команды — подсказка этой находки; запрос «по правилу» уйдёт с его memory_id
+  const [memory, setMemory] = useState<Memory | null>(null);
+  const [dialogFromMemory, setDialogFromMemory] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -79,6 +90,20 @@ export function FindingWindow() {
     setMessage(null);
   }, [number]);
 
+  // Область правила есть только в его карточке; до её загрузки блок рисуется по краткому `finding.memory`
+  const memoryId = finding?.memory_id ?? null;
+  useEffect(() => {
+    setMemory(null);
+    if (!memoryId) return;
+    let stale = false;
+    void apiJson<Memory>(`/api/v1/memories/${memoryId}`).then((r) => {
+      if (!stale) setMemory(r.data);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [memoryId]);
+
   useEffect(() => {
     void apiJson<{ enabled: boolean; embeddings_enabled: boolean }>("/api/v1/ai/status").then((r) => {
       setAiEnabled(!!r.data?.enabled);
@@ -124,12 +149,15 @@ export function FindingWindow() {
     else setMessage(res.error ?? t("common.error"));
     await load();
   };
-  const openDecision = (mode: "false_positive" | "risk_accepted", fromAi = false) => {
+  const openDecision = (mode: "false_positive" | "risk_accepted", fromAi = false, fromMemory = false) => {
     setDialogFromAi(fromAi);
+    setDialogFromMemory(fromMemory);
     setDialog(mode);
   };
+  const hint = finding.memory;
   const submitDecision = async (body: DecisionBody) => {
-    const res = await apiJson(`${base}/decisions`, "POST", { ...body, ...basis(dialogFromAi) });
+    const byRule = dialogFromMemory && hint ? { memory_id: hint.id } : {};
+    const res = await apiJson(`${base}/decisions`, "POST", { ...body, ...basis(dialogFromAi), ...byRule });
     if (!res.ok) return res.error ?? t("common.error");
     setAiBasis(null);
     await load();
@@ -274,6 +302,33 @@ export function FindingWindow() {
         </section>
       )}
 
+      {hint && (
+        <section className="card" role="region" aria-label={t("memory.block")} style={SECTION}>
+          <div className="section-label">{t("memory.block")}</div>
+          <p style={{ margin: "0 0 4px" }}>
+            {t(`decision.type.${hint.decision}`)}
+            {hint.reason_tag && ` — ${t(`decision.tags.${hint.reason_tag}`)}`}
+          </p>
+          {hint.reason && <p style={{ whiteSpace: "pre-wrap", margin: "0 0 4px" }}>{hint.reason}</p>}
+          {memory && (
+            <p style={{ fontSize: 12, margin: "0 0 4px", ...MUTED }}>
+              {t("memory.scope")}: <span style={MONO}>{memory.entity_path}</span>
+            </p>
+          )}
+          <p style={{ fontSize: 12, ...MUTED, margin: "0 0 8px" }}>{t("memory.blockHint")}</p>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            {canTriage && isOpen && !pending && (
+              <button style={PRIMARY_BUTTON} onClick={() => openDecision(hint.decision, false, true)}>
+                {t("memory.request")}
+              </button>
+            )}
+            <Link to="/memories" style={{ fontSize: 12 }}>
+              {t("memory.allRules")}
+            </Link>
+          </div>
+        </section>
+      )}
+
       <AiAnalyses analyses={analyses} canReview={canTriage} onReview={(a, accept) => void reviewAnalysis(a, accept)}
         canRequest={canAnalyze}
         queued={aiQueued}
@@ -356,6 +411,10 @@ export function FindingWindow() {
                 {ev.from_status && ev.to_status && ` · ${t(`status.${ev.from_status}`)} → ${t(`status.${ev.to_status}`)}`}
                 {!ev.from_status && ev.to_status && ` · ${t(`status.${ev.to_status}`)}`}
                 {ev.payload?.ai_analysis_id ? ` · ${t("ai.byAnalysis")}` : null}
+                {ev.event_type !== "memory_hint" && ev.payload?.memory_id ? ` · ${t("memory.byRule")}` : null}
+                {ev.event_type === "memory_hint" && typeof ev.payload?.decision === "string"
+                  ? ` · ${t(`decision.type.${ev.payload.decision}`, { defaultValue: ev.payload.decision })}`
+                  : null}
               </div>
               {ev.reason && <div style={{ whiteSpace: "pre-wrap" }}>{ev.reason}</div>}
             </li>
@@ -419,7 +478,13 @@ export function FindingWindow() {
       </details>
 
       {(dialog === "false_positive" || dialog === "risk_accepted") && (
-        <DecisionDialog mode={dialog} onSubmit={submitDecision} onClose={() => setDialog(null)} />
+        <DecisionDialog
+          mode={dialog}
+          initial={dialogFromMemory && hint ? { reason_tag: hint.reason_tag, reason: hint.reason } : undefined}
+          note={dialogFromMemory && hint ? t("memory.dialogNote") : undefined}
+          onSubmit={submitDecision}
+          onClose={() => setDialog(null)}
+        />
       )}
       {dialog === "help" && (
         <Modal title={t("window.needHelp")} onClose={() => setDialog(null)}>

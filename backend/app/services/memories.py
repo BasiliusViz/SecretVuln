@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import lazyload, load_only
 
@@ -27,7 +28,7 @@ from app.models.finding import OPEN_STATUSES, Finding
 from app.models.finding_event import ActorType, FindingEventType
 from app.models.triage_memory import MemorySource, MemoryStatus, TriageMemory
 from app.services import audit
-from app.services.access import ancestors, in_prefix
+from app.services.access import Access, ancestors, in_prefix
 from app.services.events import record_event
 
 CONDITION_FIELDS: tuple[str, ...] = ("scanner", "rule_id", "cwe", "path_glob")
@@ -54,35 +55,57 @@ def normalize_path(path: str | None) -> str:
     return p.lstrip("/")
 
 
-@lru_cache(maxsize=512)
-def glob_regex(glob: str) -> re.Pattern[str]:
-    """`*` и `?` — внутри каталога, `**` — через каталоги (`a/**/b` подходит и к `a/b`)."""
-    g = normalize_path(glob)
-    out: list[str] = []
-    i = 0
-    while i < len(g):
-        if g.startswith("**/", i):
-            out.append("(?:.*/)?")
-            i += 3
-        elif g.startswith("**", i):
-            out.append(".*")
-            i += 2
-        elif g[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        elif g[i] == "?":
-            out.append("[^/]")
-            i += 1
+def _segment_matches(pattern: str, text: str) -> bool:
+    """`*` и `?` внутри одного каталога. Без регулярных выражений: время не больше
+    len(pattern) * len(text), катастрофического перебора на «злой» маске не бывает."""
+    p = t = 0
+    star = mark = -1
+    while t < len(text):
+        if p < len(pattern) and (pattern[p] == "?" or pattern[p] == text[t]):
+            p += 1
+            t += 1
+        elif p < len(pattern) and pattern[p] == "*":
+            star, mark = p, t
+            p += 1
+        elif star != -1:
+            p = star + 1
+            mark += 1
+            t = mark
         else:
-            out.append(re.escape(g[i]))
-            i += 1
-    return re.compile("".join(out) + r"\Z")
+            return False
+    while p < len(pattern) and pattern[p] == "*":
+        p += 1
+    return p == len(pattern)
+
+
+@lru_cache(maxsize=512)
+def glob_segments(glob: str) -> tuple[str, ...]:
+    """Маска по каталогам; идущие подряд `**` схлопнуты, `**` внутри имени — как `*`."""
+    out: list[str] = []
+    for seg in normalize_path(glob).split("/"):
+        if seg == "**":
+            if not out or out[-1] != "**":
+                out.append(seg)
+        else:
+            out.append(re.sub(r"\*+", "*", seg))
+    return tuple(out)
 
 
 def path_matches(glob: str, file_path: str | None) -> bool:
+    """`*` и `?` — внутри каталога, `**` — через каталоги, в т. ч. ноль (`a/**/b` ~ `a/b`)."""
     if not file_path:
         return False
-    return glob_regex(glob).match(normalize_path(file_path)) is not None
+    parts = normalize_path(file_path).split("/")
+    # reach — до каких позиций пути можно дойти, разобрав очередной кусок маски
+    reach = {0}
+    for seg in glob_segments(glob):
+        if seg == "**":
+            reach = set(range(min(reach), len(parts) + 1))
+        else:
+            reach = {i + 1 for i in reach if i < len(parts) and _segment_matches(seg, parts[i])}
+        if not reach:
+            return False
+    return len(parts) in reach
 
 
 # --- сопоставление ---
@@ -146,9 +169,14 @@ def _set_hint(
     actor_id: uuid.UUID | None = None,
 ) -> bool:
     new_id = memory.id if memory else None
-    changed = finding.memory_id != new_id
+    old_id = finding.memory_id
+    changed = old_id != new_id
+    if memory is None:
+        if changed:
+            _clear_hint(db, finding, actor_id=actor_id)
+        return changed
     finding.memory_id = new_id
-    if memory is not None and (changed or always_event):
+    if changed or always_event:
         record_event(
             db, finding.id, FindingEventType.memory_hint,
             actor_type=ActorType.user if actor_id else ActorType.system,
@@ -158,6 +186,37 @@ def _set_hint(
             payload={"memory_id": str(memory.id), "decision": memory.decision.value},
         )
     return changed
+
+
+def _clear_hint(db: AsyncSession, finding: Finding, *, actor_id: uuid.UUID | None = None) -> None:
+    """Снять подсказку и записать это в историю (без текста правила: оно может быть
+    уже не про эту находку). Ключ `removed_memory_id`, не `memory_id`: событие не
+    «по правилу»."""
+    old_id = finding.memory_id
+    finding.memory_id = None
+    record_event(
+        db, finding.id, FindingEventType.memory_hint_removed,
+        actor_type=ActorType.user if actor_id else ActorType.system,
+        actor_id=actor_id,
+        payload={"removed_memory_id": str(old_id)},
+    )
+
+
+def _still_applies(rules: dict[uuid.UUID, Rule], finding: Finding, path: str) -> bool:
+    """Правило, стоящее у находки, всё ещё действует на неё."""
+    rule = rules.get(finding.memory_id)
+    return rule is not None and in_prefix(path, rule.path) and conditions_match(rule.memory, finding)
+
+
+async def hint_in_scope(db: AsyncSession, finding: Finding, memory: TriageMemory) -> bool:
+    """Область правила — проект находки или его предок (страховка от устаревшего
+    `memory_id`: подсказка не должна выдавать правило чужой ветки)."""
+    finding_path = await db.scalar(select(Entity.path_cache).where(Entity.id == finding.entity_id))
+    memory_path = await db.scalar(select(Entity.path_cache).where(Entity.id == memory.entity_id))
+    return (
+        finding_path is not None and memory_path is not None
+        and in_prefix(finding_path, memory_path)
+    )
 
 
 async def hint_imported(db: AsyncSession, findings: list[Finding], entity_id: uuid.UUID) -> int:
@@ -233,20 +292,60 @@ async def recompute(
         elif finding.memory_id == memory.id and not (
             active and in_prefix(path, scope_path or "") and conditions_match(memory, finding)
         ):
-            finding.memory_id = None
+            _clear_hint(db, finding, actor_id=actor_id)
             changed += 1
     await db.flush()
     return changed
 
 
-async def open_hint_counts(db: AsyncSession, memory_ids: Iterable[uuid.UUID]) -> dict[uuid.UUID, int]:
-    """Число открытых находок с подсказкой по каждому правилу."""
+async def recompute_subtree(
+    db: AsyncSession, entity_ids: list[uuid.UUID], *, actor_id: uuid.UUID | None = None
+) -> int:
+    """Пересчёт подсказок находок поддерева после переноса проекта: набор правил
+    предков сменился. Открытым — самое точное правило заново; у закрытых подсказка
+    только снимается, если её правило больше на них не действует."""
+    if not entity_ids:
+        return 0
+    await db.flush()
+    rules = await load_rules(db)
+    by_id = {r.memory.id: r for r in rules}
+    rows = (
+        await db.execute(
+            select(Finding, Entity.path_cache)
+            .join(Entity, Entity.id == Finding.entity_id)
+            .where(
+                Finding.entity_id.in_(entity_ids),
+                or_(Finding.status.in_(OPEN_STATUSES), Finding.memory_id.is_not(None)),
+            )
+            .options(*_LIGHT)
+        )
+    ).all()
+    changed = 0
+    for finding, path in rows:
+        if finding.status in OPEN_STATUSES:
+            changed += _set_hint(db, finding, pick(rules, finding, path), actor_id=actor_id)
+        elif not _still_applies(by_id, finding, path):
+            _clear_hint(db, finding, actor_id=actor_id)
+            changed += 1
+    await db.flush()
+    return changed
+
+
+async def open_hint_counts(
+    db: AsyncSession, memory_ids: Iterable[uuid.UUID], access: Access
+) -> dict[uuid.UUID, int]:
+    """Число открытых находок с подсказкой по каждому правилу — только в проектах,
+    где у читателя есть `finding:read` (правило сверху не выдаёт объём чужих веток)."""
     ids = list(memory_ids)
     if not ids:
         return {}
     rows = await db.execute(
         select(Finding.memory_id, func.count())
-        .where(Finding.memory_id.in_(ids), Finding.status.in_(OPEN_STATUSES))
+        .where(
+            Finding.memory_id.in_(ids),
+            Finding.status.in_(OPEN_STATUSES),
+            access.entity_scope("finding:read", Finding.entity_id),
+        )
         .group_by(Finding.memory_id)
     )
     return {mid: n for mid, n in rows.all()}
@@ -258,49 +357,78 @@ async def open_hint_counts(db: AsyncSession, memory_ids: Iterable[uuid.UUID]) ->
 async def suggest_after_approval(
     db: AsyncSession, finding: Finding, req: DecisionRequest
 ) -> TriageMemory | None:
-    """После одобрения решения: если в проекте набралось SUGGEST_THRESHOLD одобренных
-    решений этого типа по тому же (сканер, правило сканера), а правила команды с таким
-    же проектом, сканером, правилом и решением ещё нет (в любом статусе, в т. ч.
-    отклонённого) — создаёт правило `suggested`."""
-    if not finding.rule_id:
+    """После одобрения решения: если в проекте набралось SUGGEST_THRESHOLD разных находок
+    с одобренным решением этого типа по тому же (сканер, правило сканера) — создаёт
+    правило `suggested`. Не предлагает, если запрос был «по правилу», если на находку
+    уже действует правило (здесь или сверху), если то же уже предлагалось (ключ
+    происхождения `suggest_key` не меняется при правке и переносе) или есть правило с
+    теми же сканером, правилом и решением в проекте или у предка (в любом статусе)."""
+    if not finding.rule_id or req.memory_id is not None:
         return None
     await db.flush()
-    same = (
-        TriageMemory.entity_id == finding.entity_id,
-        TriageMemory.scanner == finding.scanner,
-        TriageMemory.rule_id == finding.rule_id,
-        TriageMemory.decision == req.decision_type,
-    )
-    if await db.scalar(select(TriageMemory.id).where(*same).limit(1)) is not None:
+    path = await db.scalar(select(Entity.path_cache).where(Entity.id == finding.entity_id))
+    if path is None or pick(await load_rules(db, path), finding, path) is not None:
         return None
-    tags = (
-        await db.scalars(
-            select(DecisionRequest.reason_tag)
+    scanner = (finding.scanner or "").strip().lower()
+    key = f"{finding.entity_id}|{scanner}|{finding.rule_id}|{req.decision_type.value}"
+    chain = select(Entity.id).where(Entity.path_cache.in_([*ancestors(path), path]))
+    existing = await db.scalar(
+        select(TriageMemory.id).where(or_(
+            TriageMemory.suggest_key == key,
+            and_(
+                TriageMemory.entity_id.in_(chain),
+                func.lower(func.trim(TriageMemory.scanner)) == scanner,
+                TriageMemory.rule_id == finding.rule_id,
+                TriageMemory.decision == req.decision_type,
+            ),
+        )).limit(1)
+    )
+    if existing is not None:
+        return None
+    rows = (
+        await db.execute(
+            select(DecisionRequest.finding_id, DecisionRequest.reason_tag, DecisionRequest.reason)
             .join(Finding, Finding.id == DecisionRequest.finding_id)
             .where(
                 Finding.entity_id == finding.entity_id,
-                Finding.scanner == finding.scanner,
+                func.lower(func.trim(Finding.scanner)) == scanner,
                 Finding.rule_id == finding.rule_id,
                 DecisionRequest.decision_type == req.decision_type,
                 DecisionRequest.status == DecisionStatus.approved,
             )
+            # свежие первыми: обоснование — из последнего решения с выбранной причиной
+            .order_by(
+                DecisionRequest.decided_at.desc().nulls_last(),
+                DecisionRequest.created_at.desc(),
+            )
         )
     ).all()
-    if len(tags) < SUGGEST_THRESHOLD:
+    findings_n = len({r.finding_id for r in rows})
+    if findings_n < SUGGEST_THRESHOLD:
         return None
-    common = Counter(t for t in tags if t is not None).most_common(1)
+    common = Counter(r.reason_tag for r in rows if r.reason_tag is not None).most_common(1)
+    tag = common[0][0] if common else None
+    # причина и текст — из одного запроса, иначе пара может не пройти check_rule
+    reason = next((r.reason for r in rows if r.reason_tag == tag and r.reason), None)
     memory = TriageMemory(
         id=uuid.uuid4(),
         entity_id=finding.entity_id,
         scanner=finding.scanner,
         rule_id=finding.rule_id,
         decision=req.decision_type,
-        reason_tag=common[0][0] if common else None,
-        reason=req.reason,
+        reason_tag=tag,
+        reason=reason,
         status=MemoryStatus.suggested,
         source=MemorySource.suggested,
+        suggest_key=key,
     )
-    db.add(memory)
+    try:
+        # два одобрения одновременно: второе упрётся в уникальный suggest_key
+        async with db.begin_nested():
+            db.add(memory)
+            await db.flush()
+    except IntegrityError:
+        return None
     # создано системой — в журнале без автора
     audit.record_audit(
         db, None, audit.MEMORY_SUGGEST,
@@ -309,7 +437,8 @@ async def suggest_after_approval(
         changes={
             **audit.snapshot(memory, audit.FIELDS["memory"]),
             "decision_id": str(req.id),
-            "approved_decisions": len(tags),
+            "approved_decisions": len(rows),
+            "approved_findings": findings_n,
         },
     )
     return memory

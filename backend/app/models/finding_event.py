@@ -23,6 +23,7 @@ class FindingEventType(str, enum.Enum):
     help_requested = "help_requested"
     help_resolved = "help_resolved"
     memory_hint = "memory_hint"  # к находке подошло правило команды
+    memory_hint_removed = "memory_hint_removed"  # подсказка правила снята
 
 
 class ActorType(str, enum.Enum):

@@ -19,6 +19,7 @@ from app.models.triage_memory import TriageMemory
 from app.models.import_ import Import, ImportStatus
 from app.services.ai_analyses import _lock_finding, refresh_ai_verdict
 from app.services.embeddings import embed_client, ensure_embedding
+from app.services import memories
 from app.services.llm import client_from_settings
 from app.services.llm.prompts import PROMPT_VERSION, TriageAnswer, build_messages
 from app.services.similarity import human_decisions, nearest
@@ -83,6 +84,8 @@ async def triage_finding(
         return []
     similar = await similar_decided(db, finding, embed)
     memory = await db.get(TriageMemory, finding.memory_id) if finding.memory_id else None
+    if memory is not None and not await memories.hint_in_scope(db, finding, memory):
+        memory = None  # устаревшая подсказка из чужой ветки — в промпт не берём
     messages = build_messages(finding, similar, memory)
     similar_ids = [str(f.id) for f, _ in similar]
     await db.commit()  # пока только читали — закрываем транзакцию на время ответа модели

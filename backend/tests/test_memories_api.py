@@ -144,6 +144,15 @@ async def test_ancestor_rules_are_visible_but_not_manageable(client, db, two_tea
     on_a = await make_memory(db, t.a)            # предок
     on_svc = await make_memory(db, t.a_svc)      # сам проект
     on_b = await make_memory(db, t.b)            # чужая ветка
+    # предложенное и выключенное правило предка сверху не видно
+    hidden = [
+        await make_memory(db, t.a, status=MemoryStatus.suggested, reason="из чужой находки"),
+        await make_memory(db, t.a, status=MemoryStatus.disabled),
+    ]
+    # находка соседнего проекта под тем же правилом в счётчик читателя не попадает
+    sibling = await make_entity(db, "other", parent_id=t.a.id)
+    await make_finding(db, sibling, "sib", rule_id="rule.a", memory_id=on_a.id)
+    await make_finding(db, t.a_svc, "own", rule_id="rule.a", memory_id=on_a.id)
     deep = await make_user("deep@test.local")
     await grant(deep[0], "Инженер ИБ", t.a_svc)
     _, h = deep
@@ -152,6 +161,12 @@ async def test_ancestor_rules_are_visible_but_not_manageable(client, db, two_tea
     assert {m["id"] for m in rows} == {str(on_a.id), str(on_svc.id)}
     by_id = {m["id"]: m for m in rows}
     assert by_id[str(on_a.id)]["can_manage"] is False
+    assert by_id[str(on_a.id)]["open_findings"] == 1
+    for m in hidden:
+        assert (await client.get(f"{URL}/{m.id}", headers=h)).status_code == 404
+    # тот, кто читает саму область, видит правила в любом статусе
+    own = (await client.get(URL, headers=t.dev_a[1])).json()
+    assert {str(m.id) for m in hidden} <= {m["id"] for m in own}
     assert by_id[str(on_svc.id)]["can_manage"] is True
 
     assert (await client.get(f"{URL}/{on_a.id}", headers=h)).status_code == 200
@@ -335,10 +350,11 @@ async def test_suggestion_after_three_approved_and_no_repeats(client, db, admin)
     assert (memory.entity_id, memory.scanner, memory.rule_id) == (entity.id, "Semgrep", "rule.a")
     assert memory.decision.value == "false_positive"
     assert memory.reason_tag.value == "test_code"  # самый частый тег
-    assert memory.reason == "причина dead_code"    # обоснование последнего решения
+    assert memory.reason == "причина test_code"    # текст — из решения с этим же тегом
     assert memory.created_by is None
     (row,) = await _audit(db, "memory.suggest")
     assert row.actor_id is None and row.changes["approved_decisions"] == 3
+    assert row.changes["approved_findings"] == 3
     # предложенное правило ничего не подсказывает
     await db.refresh(f[3])
     assert f[3].memory_id is None
@@ -351,6 +367,158 @@ async def test_suggestion_after_three_approved_and_no_repeats(client, db, admin)
     await _decide(client, h, f[4])
     assert len((await db.scalars(select(TriageMemory))).all()) == 1
     assert (await db.scalar(select(DecisionRequest.id).limit(1))) is not None
+
+
+async def _count_memories(db) -> int:
+    return len((await db.scalars(select(TriageMemory))).all())
+
+
+async def test_suggestion_not_repeated_after_move_or_rule_change(client, db, admin):
+    _, h = admin
+    root = await make_entity(db, "root")
+    child = await make_entity(db, "child", parent_id=root.id)
+    f = [await make_finding(db, child, f"f{i}", rule_id="rule.a") for i in range(5)]
+    for x in f[:3]:
+        await _decide(client, h, x)
+    (memory,) = (await db.scalars(select(TriageMemory))).all()
+
+    # предложение перенесли на предка и поменяли правило сканера — ключ происхождения тот же
+    r = await client.patch(
+        f"{URL}/{memory.id}", headers=h, json={"entity_id": str(root.id), "rule_id": "rule.x"}
+    )
+    assert r.status_code == 200, r.text
+    await _decide(client, h, f[3])
+    await _decide(client, h, f[4])
+    assert await _count_memories(db) == 1
+
+
+async def test_no_suggestion_when_rule_already_applies(client, db, admin):
+    _, h = admin
+    root = await make_entity(db, "root")
+    child = await make_entity(db, "child", parent_id=root.id)
+    r = await client.post(URL, headers=h, json={"entity_id": str(root.id), "rule_id": "rule.c", **FP})
+    assert r.status_code == 201
+    for i in range(3):
+        await _decide(client, h, await make_finding(db, child, f"c{i}", rule_id="rule.c"))
+    assert await _count_memories(db) == 1  # только ручное правило предка
+
+
+async def test_no_suggestion_for_requests_by_rule(client, db, admin):
+    _, h = admin
+    entity = await make_entity(db)
+    # подсказка стоит, хотя условие уже не совпадает (pick её не найдёт) — отсекает req.memory_id
+    memory = await make_memory(db, entity, rule_id="rule.z", reason_tag="test_code")
+    for i in range(3):
+        f = await make_finding(db, entity, f"r{i}", rule_id="rule.a", memory_id=memory.id)
+        r = await client.post(
+            f"/api/v1/findings/{f.id}/decisions", headers=h,
+            json={"decision_type": "false_positive", "reason_tag": "test_code",
+                  "memory_id": str(memory.id)},
+        )
+        assert r.status_code == 201 and r.json()["status"] == "approved", r.text
+    assert await _count_memories(db) == 1
+
+
+async def test_no_suggestion_when_same_rule_exists_with_other_scanner_case(client, db, admin):
+    _, h = admin
+    entity = await make_entity(db)
+    await make_memory(
+        db, entity, scanner="SEMGREP", rule_id="rule.a", status=MemoryStatus.disabled
+    )
+    for i in range(3):
+        await _decide(client, h, await make_finding(db, entity, f"s{i}", rule_id="rule.a"))
+    assert await _count_memories(db) == 1
+
+
+async def test_suggestion_threshold_counts_distinct_findings(client, db, admin):
+    _, h = admin
+    entity = await make_entity(db)
+    same = await make_finding(db, entity, "same", rule_id="rule.a")
+    for _ in range(3):  # одна находка трижды: переоткрыли и снова признали ложной
+        await _decide(client, h, same)
+        await db.refresh(same)
+        same.status = FindingStatus.new
+        await db.commit()
+    assert await _count_memories(db) == 0
+    # сканер в другом регистре — та же пара (сканер, правило)
+    await _decide(client, h, await make_finding(db, entity, "g1", rule_id="rule.a", scanner="semgrep"))
+    assert await _count_memories(db) == 0
+    await _decide(client, h, await make_finding(db, entity, "g2", rule_id="rule.a"))
+    (memory,) = (await db.scalars(select(TriageMemory))).all()
+    assert memory.status == MemoryStatus.suggested
+
+
+async def test_disable_suggestion_with_incomplete_reason(client, db, admin):
+    _, h = admin
+    entity = await make_entity(db)
+    memory = await make_memory(
+        db, entity, status=MemoryStatus.suggested, reason_tag="other", reason=None
+    )
+    r = await client.patch(f"{URL}/{memory.id}", headers=h, json={"status": "approved"})
+    assert r.status_code == 422
+    r = await client.patch(f"{URL}/{memory.id}", headers=h, json={"status": "disabled"})
+    assert r.status_code == 200, r.text
+    # условие обязательно и у выключенного
+    r = await client.patch(f"{URL}/{memory.id}", headers=h, json={"rule_id": None})
+    assert r.status_code == 422
+
+
+async def test_entity_move_recomputes_hints(client, db, admin):
+    _, h = admin
+    a = await make_entity(db, "a")
+    b = await make_entity(db, "b")
+    svc = await make_entity(db, "svc", parent_id=a.id)
+    open_f = await make_finding(db, svc, "o", rule_id="rule.a")
+    closed_f = await make_finding(db, svc, "c", rule_id="rule.a")
+    r = await client.post(URL, headers=h, json={"entity_id": str(a.id), "rule_id": "rule.a", **FP})
+    rule_a = r.json()["id"]
+    await _refresh(db, open_f)
+    assert str(open_f.memory_id) == rule_a
+    closed_f.memory_id = open_f.memory_id
+    closed_f.status = FindingStatus.fixed
+    await db.commit()
+    r = await client.post(URL, headers=h, json={"entity_id": str(b.id), "rule_id": "rule.a", **FP})
+    rule_b = r.json()["id"]
+
+    r = await client.patch(f"/api/v1/entities/{svc.id}", headers=h, json={"parent_id": str(b.id)})
+    assert r.status_code == 200, r.text
+    await _refresh(db, open_f, closed_f)
+    assert str(open_f.memory_id) == rule_b
+    assert closed_f.memory_id is None and closed_f.status == FindingStatus.fixed
+    removed = (
+        await db.scalars(
+            select(FindingEvent).where(FindingEvent.event_type == FindingEventType.memory_hint_removed)
+        )
+    ).all()
+    assert [e.finding_id for e in removed] == [closed_f.id]
+    assert removed[0].payload == {"removed_memory_id": rule_a}
+
+
+async def test_stale_hint_from_other_branch_is_ignored(client, db, admin):
+    user, h = admin
+    a = await make_entity(db, "a")
+    b = await make_entity(db, "b")
+    foreign = await make_memory(db, a, reason_tag="test_code", reason="Чужая ветка")
+    finding = await make_finding(db, b, "f1", number=20, rule_id="rule.a", memory_id=foreign.id)
+    r = await client.post(
+        f"/api/v1/findings/{finding.id}/decisions", headers=h,
+        json={"decision_type": "false_positive", "reason_tag": "test_code",
+              "memory_id": str(foreign.id)},
+    )
+    assert r.status_code == 422
+    got = await agent_tools.get_finding(db, await _principal(db, user), "SV-20")
+    assert got["memory"] is None
+
+
+async def test_disabled_memory_text_not_shown_on_finding(client, db, admin):
+    _, h = admin
+    entity = await make_entity(db)
+    memory = await make_memory(db, entity, status=MemoryStatus.disabled, reason="Скрытое")
+    finding = await make_finding(db, entity, "f1", rule_id="rule.a", memory_id=memory.id)
+    r = await client.get(f"/api/v1/findings/{finding.id}", headers=h)
+    assert r.status_code == 200 and r.json()["memory"] is None
+    got = await agent_tools.get_finding(db, await _principal(db, admin[0]), str(finding.id))
+    assert got["memory"] is None
 
 
 # --- MCP ---

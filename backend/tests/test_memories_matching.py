@@ -39,10 +39,26 @@ from tests.factories import make_entity, make_finding, make_import, make_memory,
         ("app/a.py", "app/a.pyc", False),
         ("a+b/*.py", "a+b/x.py", True),
         ("tests/**", None, False),
+        ("**", "a/b.py", True),
+        ("tests/**/**/*.py", "tests/a.py", True),
+        ("a**b/*.py", "axxb/c.py", True),
+        ("a**b/*.py", "a/b/c.py", False),
+        ("*.py", "a/b.py", False),
     ],
 )
 def test_path_mask(glob, path, ok):
     assert path_matches(glob, path) is ok
+
+
+def test_hostile_mask_is_fast():
+    import time
+
+    path = "/".join(["a" * 20] * 40) + "/x.py"
+    globs = ("**/" * 100 + "nope", "*a" * 140 + "b", "**" * 150, "/".join(["*a*a*a*b"] * 30))
+    started = time.perf_counter()
+    for glob in globs:
+        assert path_matches(glob, path) is False
+    assert time.perf_counter() - started < 1
 
 
 async def test_each_condition_must_match(db):

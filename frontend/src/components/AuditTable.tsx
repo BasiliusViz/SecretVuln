@@ -11,14 +11,14 @@ const PAGE_SIZE = 50;
 // Ключи, у которых массив из двух элементов — это список, а не пара «было/стало»
 const VALUE_KEYS = new Set(["added", "removed", "permissions", "credentials_changed"]);
 // Значения, которые переводим по словарю, а не выводим как есть
-const TRANSLATED = new Set(["reason", "source"]);
+const TRANSLATED = new Set(["reason", "source", "decision", "status", "reason_tag"]);
 
 const CELL = { padding: "8px 12px" };
 const TH = { ...CELL, fontWeight: 500 };
 
 /** create/delete пишут снимок полей, остальные действия — пары `[было, стало]` */
 function isSnapshot(action: string): boolean {
-  return action.endsWith(".create") || action.endsWith(".delete");
+  return action.endsWith(".create") || action.endsWith(".delete") || action === "memory.suggest";
 }
 
 function isDiff(action: string, key: string, value: unknown): value is [unknown, unknown] {

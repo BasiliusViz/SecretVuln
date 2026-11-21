@@ -35,7 +35,7 @@ class _Conditions(BaseModel):
     scanner: str | None = Field(default=None, max_length=100)
     rule_id: str | None = Field(default=None, max_length=512)
     cwe: str | None = Field(default=None, max_length=50)
-    path_glob: str | None = Field(default=None, max_length=1024)
+    path_glob: str | None = Field(default=None, max_length=300)
     reason: str | None = Field(default=None, max_length=2000)
 
     @field_validator(*CONDITIONS, "reason", mode="before")
@@ -90,6 +90,6 @@ class MemoryRead(BaseModel):
     approved_at: datetime | None
     created_at: datetime
     updated_at: datetime
-    # открытые находки с этой подсказкой (по всему поддереву, без учёта прав читателя)
+    # открытые находки с этой подсказкой в проектах, которые читатель видит
     open_findings: int = 0
     can_manage: bool = False

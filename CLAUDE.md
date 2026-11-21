@@ -48,6 +48,7 @@ Vulnerability management платформа: импорт находок без�
 | `api/service_accounts.py`, `services/api_tokens.py` | Сервисные аккаунты (агенты) и API-токены `sv_…` |
 | `api/analyses.py`, `services/ai_analyses.py` | Выводы ИИ (`ai_analyses`), рассмотрение, `findings.ai_verdict` |
 | `mcp_server.py`, `services/agent_tools.py` | MCP для агентов (порт `SV_MCP_PORT`), инструменты поверх тех же запросов |
+| `api/memories.py`, `services/memories.py` | Правила команды (`triage_memories`): сопоставление, подсказка `findings.memory_id`, пересчёт, предложения |
 | `services/masking.py` | Маскирование секретов и `is_secret_finding` (эмбеддинги и промпт ИИ) |
 | `services/embeddings.py`, `services/similarity.py` | Векторы находок (`finding_embeddings`, pgvector), «Похожие», поиск по смыслу |
 | `authz/enforcer.py`, `authz/permissions.py`, `authz/rbac_model.conf` | Casbin: enforcer, каталог прав, модель |
@@ -76,7 +77,7 @@ Vulnerability management платформа: импорт находок без�
 | `theme/themes.ts`, `theme/ThemeContext.tsx` | Список тем и их состояние |
 | `theme/severity.ts` | Цвета критичности из переменных темы (`useSeverityColors`) |
 | `i18n/ru.json` | **Все строки интерфейса** |
-| `pages/` | `Dashboard`, `Assets` (раздел «Проекты»), `Findings` (раздел «Уязвимости»), `Imports`, `Groups`, `Roles`, `Audit` (журнал аудита), `Login` |
+| `pages/` | `Dashboard`, `Assets` (раздел «Проекты»), `Findings` (раздел «Уязвимости»), `Imports`, `Groups`, `Roles`, `Audit` (журнал аудита), `Memories` («Правила команды»), `Login` |
 | `components/AuditTable.tsx` | Таблица журнала: раскрытие изменений, пагинация (страница `/audit` и вкладка проекта) |
 | `api/client.ts` | `apiFetch`: Bearer-токен, редирект на логин при 401 |
 
@@ -110,6 +111,7 @@ Vulnerability management платформа: импорт находок без�
 - **Этап 6 «Выход для агентов»** — сделан (бэкенд + фронтенд), прошёл ревью: сервисные аккаунты и токены `sv_`, `ai_analyses`, MCP, блок «Анализ ИИ», «Вердикт ИИ» в списках. Ручная проверка (API, MCP, пять тем) и недостающие тесты — сделаны 11.10. **Дальше — этап 7** (порядок — в спеке этапа 6).
 - **Этап 7 «Встроенный ИИ»** — сделан, прошёл ревью, в `main`: LLM-клиент (`services/llm/`, `SV_AI_*`), промпт с защитой от prompt-injection и без секретов, авторазбор новых находок после импорта и кнопка «Разобрать ИИ» (право `finding:triage`; `finding:analyze` — только агентам), не больше одного разбора за раз в воркере, плитка «Согласие с ИИ» (`ai_agreement`, последний вывод агента, автозакрытие не считается решением). Проверка на живой модели — когда она будет.
 - **Этап 8 «Векторная база»** — сделан, прошёл ревью, в `main`: pgvector, `finding_embeddings` (`source_updated_at`), маскирование, `embed_pending` в воркере, `/findings/{id}/similar`, MCP `find_similar` и `search_findings(query)`, триажёр `triage-v2`; UI — блок «Похожие находки» в окне SV-N, «На основе похожих» в «Анализ ИИ». Открытое — `docs/stage8-handoff.md`. Проверка на живой модели (`bge-m3`) — когда будет. **Дальше — этап 9** (порядок — в спеке этапа 6).
+- **Этап 9 «Память команды»** — сделан (бэкенд + фронтенд): правила команды (`triage_memories`, право `memory:manage`), подсказка на находке и «Запросить по правилу», предложения после 3 одобренных решений, MCP `list_memories`, промпт `triage-v3`, страница `/memories`. Подробно — `docs/architecture.md`, раздел «Память команды»; открытое — `docs/stage9-handoff.md`.
 - **Отложено, пока не попросят**: Helm/деплой (Dockerfile ещё нет — понадобятся при первом реальном деплое), конструктор дашборд-виджетов — `docs/superpowers/specs/2026-10-05-stage6-dashboard-widgets.md`.
 
 ## Документы

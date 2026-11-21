@@ -14,6 +14,7 @@ const STATIC_ROUTES = [
   "/groups",
   "/roles",
   "/sla",
+  "/memories",
   "/audit",
   "/service-accounts",
 ];
@@ -66,6 +67,8 @@ test("переключение темы применяется и пережив
   await page.goto("/");
   const picker = page.getByLabel(t("nav.theme"));
   const html = page.locator("html");
+  // evaluateAll не ждёт отрисовки — сначала дождаться переключателя
+  await expect(picker.locator("option").nth(1)).toBeAttached();
   const values = await picker.locator("option").evaluateAll((opts) =>
     opts.map((o) => (o as HTMLOptionElement).value),
   );

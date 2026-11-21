@@ -16,7 +16,7 @@ from app.schemas.decision import DecisionCreate
 from app.services.ai_analyses import AnalysisError, analysis_of_finding
 from app.services.events import record_event
 from app.services.finding_state import set_status
-from app.services.memories import suggest_after_approval
+from app.services.memories import hint_in_scope, suggest_after_approval
 
 # Находка в этих статусах уже не нуждается в решении
 CLOSED_STATUSES = (FindingStatus.false_positive, FindingStatus.risk_accepted, FindingStatus.fixed)
@@ -66,6 +66,8 @@ async def create_request(
             memory is None
             or finding.memory_id != memory.id
             or memory.status != MemoryStatus.approved
+            # подсказка могла остаться от прежнего места проекта в дереве
+            or not await hint_in_scope(db, finding, memory)
         ):
             raise DecisionError(422, "Правило команды не подходит к этой находке")
         if memory.decision != data.decision_type:

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.decision_request import ReasonTag
 from app.models.finding import FindingStatus
@@ -69,6 +69,15 @@ class FindingRead(BaseModel):
     ai_verdict: str | None = None
     memory_id: uuid.UUID | None = None
     memory: MemoryBrief | None = None
+
+    @field_validator("memory", mode="before")
+    @classmethod
+    def _only_active_memory(cls, v):
+        # импорт мог поставить подсказку правила, которое тут же выключили, — его текст не отдаём
+        status = getattr(v, "status", None)
+        if status is not None and getattr(status, "value", status) != "approved":
+            return None
+        return v
 
 
 class FindingStatusUpdate(BaseModel):

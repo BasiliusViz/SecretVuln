@@ -55,6 +55,43 @@ export interface Finding {
   assignee_group: GroupBrief | null;
   assignee_user: { id: string; email: string; full_name: string | null } | null;
   ai_verdict: AiVerdict | null;
+  /** Правило команды, подсказанное находке (этап 9) */
+  memory_id: string | null;
+  memory: MemoryBrief | null;
+}
+
+/** Событие окна для сайдбара: число предложенных правил могло измениться */
+export const MEMORIES_CHANGED = "sv:memories-changed";
+
+export type MemoryDecision = "false_positive" | "risk_accepted";
+export const MEMORY_STATUSES = ["approved", "suggested", "disabled"] as const;
+export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
+
+/** Краткое правило в ответе находки */
+export interface MemoryBrief {
+  id: string;
+  decision: MemoryDecision;
+  reason_tag: ReasonTag | null;
+  reason: string | null;
+}
+
+/** Правило команды: GET /memories */
+export interface Memory extends MemoryBrief {
+  entity_id: string;
+  entity_path: string;
+  entity_name: string;
+  scanner: string | null;
+  rule_id: string | null;
+  cwe: string | null;
+  path_glob: string | null;
+  status: MemoryStatus;
+  source: "manual" | "suggested";
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** открытые находки с этой подсказкой */
+  open_findings: number;
+  can_manage: boolean;
 }
 
 export const AI_VERDICTS = ["true_positive", "false_positive", "uncertain"] as const;
@@ -157,6 +194,8 @@ export interface Decision {
   reason: string | null;
   expires_at: string | null;
   requested_by_id: string | null;
+  /** запрос создан «по правилу команды» */
+  memory_id: string | null;
   decision_comment: string | null;
   created_at: string;
   entity_path: string | null;
@@ -365,4 +404,5 @@ export const AUDIT_ACTION_GROUPS: Record<string, string[]> = {
   roles: ["role."],
   sla: ["sla_policy."],
   imports: ["import."],
+  memories: ["memory."],
 };

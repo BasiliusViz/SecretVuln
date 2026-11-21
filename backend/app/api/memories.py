@@ -1,8 +1,9 @@
 """Правила команды: подсказки решений по находкам (`triage_memories`).
 
-Читает правило тот, у кого `finding:read` на его область **или на проект под ней**
-(правило сверху действует на его находки). Меняет — `memory:manage` на область;
-чужое правило — 404.
+Читает правило тот, у кого `finding:read` на его область; действующее (`approved`)
+правило видно ещё и тем, у кого `finding:read` на проект под ней — оно действует на
+их находки. Предложенные и выключенные сверху не видны: в них обоснование из решения
+по чужой находке. Меняет — `memory:manage` на область; чужое правило — 404.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Principal, not_found, require_permission
@@ -38,7 +39,7 @@ def _read(principal: Principal, memory: TriageMemory, entity: Entity, open_findi
 
 
 async def _one(db: AsyncSession, principal: Principal, memory: TriageMemory, entity: Entity):
-    counts = await open_hint_counts(db, [memory.id])
+    counts = await open_hint_counts(db, [memory.id], principal.access)
     return _read(principal, memory, entity, counts.get(memory.id, 0))
 
 
@@ -47,8 +48,11 @@ async def _visible(
 ) -> tuple[TriageMemory, Entity]:
     memory = await db.get(TriageMemory, memory_id)
     entity = await db.get(Entity, memory.entity_id) if memory else None
+    access = principal.access
     if memory is None or not (
-        principal.access.allows_from_above(READ, entity) or principal.access.allows(MANAGE, entity)
+        access.allows(READ, entity)
+        or access.allows(MANAGE, entity)
+        or (memory.status == MemoryStatus.approved and access.allows_from_above(READ, entity))
     ):
         raise not_found("Правило")
     return memory, entity
@@ -83,8 +87,13 @@ async def list_memories(
         select(TriageMemory, Entity)
         .join(Entity, Entity.id == TriageMemory.entity_id)
         .where(or_(
-            access.filter_from_above(READ, Entity.path_cache),
+            access.filter(READ, Entity.path_cache),
             access.filter(MANAGE, Entity.path_cache),
+            # сверху видны только действующие правила
+            and_(
+                TriageMemory.status == MemoryStatus.approved,
+                access.filter_from_above(READ, Entity.path_cache),
+            ),
         ))
     )
     if manageable:
@@ -102,7 +111,7 @@ async def list_memories(
         q = q.where(or_(*scope))
     q = q.order_by(TriageMemory.created_at.desc(), TriageMemory.id).offset(offset).limit(limit)
     rows = (await db.execute(q)).all()
-    counts = await open_hint_counts(db, [m.id for m, _ in rows])
+    counts = await open_hint_counts(db, [m.id for m, _ in rows], access)
     return [_read(principal, m, e, counts.get(m.id, 0)) for m, e in rows]
 
 
@@ -172,17 +181,23 @@ async def update_memory(
             setattr(memory, f, getattr(data, f))
     if "decision" in fields and data.decision is not None:
         memory.decision = data.decision
-    try:
-        check_rule(
-            conditions={f: getattr(memory, f) for f in CONDITIONS},
-            decision=memory.decision, reason_tag=memory.reason_tag, reason=memory.reason,
-        )
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
-
     was_approved = memory.status == MemoryStatus.approved
     if data.status is not None:
         memory.status = MemoryStatus(data.status)
+    # выключенное правило ничего не подсказывает — его обоснование можно не проверять
+    # (иначе предложение с неполным текстом нельзя было бы отклонить)
+    conditions = {f: getattr(memory, f) for f in CONDITIONS}
+    try:
+        if memory.status != MemoryStatus.disabled:
+            check_rule(
+                conditions=conditions,
+                decision=memory.decision, reason_tag=memory.reason_tag, reason=memory.reason,
+            )
+        elif not any(conditions.values()):
+            # условие нужно всегда: без него строку не примет ограничение в БД
+            raise ValueError("Задайте хотя бы одно условие: сканер, правило, CWE или маску пути")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
     now_approved = memory.status == MemoryStatus.approved
     if now_approved and not was_approved:
         memory.approved_by = principal.user.id

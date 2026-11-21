@@ -31,6 +31,7 @@ export function Findings() {
   const [tagFilter, setTagFilter] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [aiFilter, setAiFilter] = useState("");
+  const [hasMemory, setHasMemory] = useState(false);
   const [order, setOrder] = useState<(typeof ORDERS)[number]>("last_seen");
   const [tags, setTags] = useState<string[]>([]);
   const requestId = useRef(0);
@@ -48,6 +49,7 @@ export function Findings() {
     if (tagFilter) params.set("tag", tagFilter);
     if (overdueOnly) params.set("overdue", "true");
     applyAiVerdictFilter(params, aiFilter);
+    if (hasMemory) params.set("has_memory", "true");
     params.set("order", order);
     params.set("limit", "200");
     // Фильтры меняются быстрее, чем приходят ответы — игнорируем устаревший ответ,
@@ -56,7 +58,7 @@ export function Findings() {
     void apiJson<Finding[]>(`/api/v1/findings?${params}`).then((r) => {
       if (id === requestId.current) setFindings(r.data ?? []);
     });
-  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter, tagFilter, overdueOnly, aiFilter, order]);
+  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter, tagFilter, overdueOnly, aiFilter, hasMemory, order]);
 
   useEffect(load, [load]);
 
@@ -171,6 +173,10 @@ export function Findings() {
           <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
           {t("vulns.overdueOnly")}
         </label>
+        <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={hasMemory} onChange={(e) => setHasMemory(e.target.checked)} />
+          {t("vulns.hasMemory")}
+        </label>
         <AiVerdictFilter value={aiFilter} onChange={setAiFilter} style={{ ...inputStyle, minWidth: 160 }} />
         <select
           style={{ ...inputStyle, minWidth: 160 }}
@@ -223,6 +229,26 @@ export function Findings() {
                     <Link to={`/f/SV-${f.number}`} style={{ fontWeight: 500, color: "inherit" }}>
                       {f.title.slice(0, 100)}
                     </Link>
+                    {f.memory && (
+                      <span
+                        title={t("memory.badgeTitle", { decision: t(`decision.type.${f.memory.decision}`) })}
+                        style={{
+                          marginLeft: 8,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          fontSize: 11,
+                          padding: "1px 8px",
+                          borderRadius: 99,
+                          background: "var(--accent-bg)",
+                          color: "var(--accent)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <span aria-hidden="true">◆</span>
+                        {t("memory.badge")}
+                      </span>
+                    )}
                     {f.rule_id && <div style={{ ...MONO, fontSize: 11, color: "var(--text-muted)" }}>{f.rule_id}</div>}
                   </td>
                   <td style={{ ...CELL, fontSize: 12 }}>{f.assignee_group?.name ?? t("team.none")}</td>
