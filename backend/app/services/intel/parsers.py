@@ -53,28 +53,68 @@ class Parsed:
 # --- открытие файла ---------------------------------------------------------------
 
 
+# Во сколько раз распакованный файл может быть больше лимита загрузки (SV_INTEL_MAX_MB):
+# защита от gzip/zip-бомб. Настоящие справочники сжимаются в 5–15 раз и в лимит укладываются.
+UNPACKED_FACTOR = 4
+# KEV читается json.load целиком в память — ему отдельный, жёсткий потолок (настоящий файл ~2 МБ)
+KEV_MAX_BYTES = 64 * 1024 * 1024
+
+
+def max_unpacked_bytes() -> int:
+    from app.core.config import get_settings
+
+    return get_settings().intel_max_mb * 1024 * 1024 * UNPACKED_FACTOR
+
+
+def _too_big(limit: int) -> IntelFormatError:
+    return IntelFormatError(f"Файл после распаковки больше {limit // (1024 * 1024)} МБ")
+
+
+class _Limited(io.RawIOBase):
+    """Поток, который падает с IntelFormatError, как только прочитано больше `limit` байт."""
+
+    def __init__(self, inner: Any, limit: int) -> None:
+        self._inner, self._limit, self._read = inner, limit, 0
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b) -> int:  # type: ignore[override]
+        data = self._inner.read(len(b))
+        self._read += len(data)
+        if self._read > self._limit:
+            raise _too_big(self._limit)
+        b[: len(data)] = data
+        return len(data)
+
+
 @contextmanager
-def _open(path: Path, member_suffix: str) -> Iterator[IO[bytes]]:
+def _open(path: Path, member_suffix: str, limit: int | None = None) -> Iterator[IO[bytes]]:
+    limit = limit if limit is not None else max_unpacked_bytes()
     with open(path, "rb") as fh:
         magic = fh.read(4)
     if magic[:2] == b"\x1f\x8b":
         with gzip.open(path, "rb") as f:
-            yield f
+            yield io.BufferedReader(_Limited(f, limit), CHUNK)
     elif magic == b"PK\x03\x04":
         try:
             zf = zipfile.ZipFile(path)
         except zipfile.BadZipFile as e:
             raise IntelFormatError(f"Повреждённый zip-архив: {e}") from e
         with zf:
-            names = [
-                i.filename for i in zf.infolist()
+            members = [
+                i for i in zf.infolist()
                 if not i.is_dir() and i.filename.lower().endswith(member_suffix)
             ]
-            if not names:
+            if not members:
                 raise IntelFormatError(f"В архиве нет файла {member_suffix}")
-            with zf.open(names[0]) as f:
-                yield f
+            if members[0].file_size > limit:  # по заголовку; поток всё равно считаем ниже
+                raise _too_big(limit)
+            with zf.open(members[0]) as f:
+                yield io.BufferedReader(_Limited(f, limit), CHUNK)
     else:
+        if path.stat().st_size > limit:
+            raise _too_big(limit)
         with open(path, "rb") as f:
             yield f
 
@@ -148,7 +188,7 @@ def _epss(path: Path, parsed: Parsed) -> Iterator[Row]:
 
 
 def _kev(path: Path, parsed: Parsed) -> Iterator[Row]:
-    with _open(path, ".json") as raw:
+    with _open(path, ".json", min(KEV_MAX_BYTES, max_unpacked_bytes())) as raw:
         try:
             data = json.load(io.TextIOWrapper(raw, encoding="utf-8-sig"))
         except json.JSONDecodeError as e:

@@ -11,6 +11,7 @@ import logging
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,11 +96,14 @@ async def upload_source(
     await db.rollback()  # не держим транзакцию, пока файл копируется в хранилище
 
     file.file.seek(0)
-    key = storage.save_stream(file.file, file.filename or "intel", prefix=f"intel/{source.value}")
+    # до 1 ГБ на диск или в S3 — синхронно, поэтому в пуле потоков, чтобы не стопорить event loop
+    key = await run_in_threadpool(
+        storage.save_stream, file.file, file.filename or "intel", prefix=f"intel/{source.value}"
+    )
     state = await get_state(db, source, lock=True)  # параллельный запрос ждёт здесь
     if is_loading(state):
         await db.rollback()
-        storage.delete(key)
+        await run_in_threadpool(storage.delete, key)
         raise HTTPException(status.HTTP_409_CONFLICT, "Загрузка уже идёт")
     state.status = IntelStatus.loading
     state.started_at = datetime.now(timezone.utc)
@@ -116,6 +120,6 @@ async def upload_source(
         state.status = IntelStatus.failed
         state.error = "Очередь задач недоступна — попробуйте позже"
         await db.commit()
-        storage.delete(key)
+        await run_in_threadpool(storage.delete, key)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, state.error)
     return IntelUploadAccepted(source=source, status=IntelStatus.loading)

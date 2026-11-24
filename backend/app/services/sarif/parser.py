@@ -35,21 +35,32 @@ class SarifRun:
     repository_uri: str | None = None
 
 
+# Только номер: Semgrep пишет теги вида «CWE-89: Improper Neutralization …», справочник ищет «CWE-89»
+CWE_PREFIX_RE = re.compile(r"CWE-(\d+)(?!\d)", re.IGNORECASE)
+
+
+def _cwe_id(value: str) -> str | None:
+    m = CWE_PREFIX_RE.match(value.strip())
+    return f"CWE-{m.group(1)}" if m else None
+
+
 def _extract_cwe(rule: dict[str, Any] | None) -> str | None:
     if not rule:
         return None
     for tag in rule.get("properties", {}).get("tags", []):
+        if not isinstance(tag, str):
+            continue
         tag_lower = tag.lower()
         if tag_lower.startswith("cwe-"):
-            return tag.upper()
+            return _cwe_id(tag)
         if "external/cwe/" in tag_lower:
-            parts = tag.split("/")
-            return f"CWE-{parts[-1]}" if parts[-1].isdigit() else None
+            last = tag.rstrip("/").split("/")[-1]  # CodeQL: external/cwe/cwe-502
+            return f"CWE-{last}" if last.isdigit() else _cwe_id(last)
     for rel in rule.get("relationships", []):
         target = rel.get("target", {})
         tid = target.get("id", "")
-        if tid.upper().startswith("CWE-"):
-            return tid.upper()
+        if isinstance(tid, str) and tid.upper().startswith("CWE-"):
+            return _cwe_id(tid)
     return None
 
 

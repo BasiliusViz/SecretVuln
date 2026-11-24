@@ -163,3 +163,39 @@ def test_cwe_v5_groupings():
     cwe = {r["cwe_id"]: r for r in _table(rows, "cwe")}
     assert parsed.file_date == date(2026, 10, 28)
     assert cwe["CWE-89"]["category"] == "Injection"
+
+
+# --- лимит распаковки (gzip/zip-бомбы) ---
+
+
+def test_kev_gzip_bomb_under_json_rejected(tmp_path, monkeypatch):
+    from app.services.intel import parsers
+
+    monkeypatch.setattr(parsers, "KEV_MAX_BYTES", 1024 * 1024)
+    path = tmp_path / "kev.json"
+    with gzip.open(path, "wb") as f:  # сигнатура gzip под расширением .json
+        f.write(b'{"vulnerabilities": [' + b" " * (2 * 1024 * 1024) + b"]}")
+    with pytest.raises(IntelFormatError, match="после распаковки"):
+        _rows(IntelSource.kev, path)
+
+
+def test_epss_gzip_over_unpacked_limit_rejected(tmp_path, monkeypatch):
+    from app.services.intel import parsers
+
+    monkeypatch.setattr(parsers, "max_unpacked_bytes", lambda: 1024 * 1024)
+    path = tmp_path / "epss.csv.gz"
+    with gzip.open(path, "wb") as f:
+        f.write(b"cve,epss,percentile\n" + b"CVE-2021-44228,0.9,0.9\n" * 100_000)
+    with pytest.raises(IntelFormatError, match="после распаковки"):
+        _rows(IntelSource.epss, path)
+
+
+def test_zip_member_over_limit_rejected_by_header(tmp_path, monkeypatch):
+    from app.services.intel import parsers
+
+    monkeypatch.setattr(parsers, "max_unpacked_bytes", lambda: 1024 * 1024)
+    path = tmp_path / "cwe.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("cwec.xml", b"<a>" + b" " * (2 * 1024 * 1024) + b"</a>")
+    with pytest.raises(IntelFormatError, match="после распаковки"):
+        _rows(IntelSource.cwe, path)
