@@ -17,6 +17,7 @@ const STATIC_ROUTES = [
   "/memories",
   "/audit",
   "/service-accounts",
+  "/intel",
 ];
 
 const KEYS = allKeys();

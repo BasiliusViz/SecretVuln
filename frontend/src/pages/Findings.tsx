@@ -1,37 +1,49 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { apiJson } from "../api/json";
-import type { EntityNode, Finding, Group } from "../api/types";
+import { OPEN_STATUSES } from "../api/types";
+import type { EntityNode, Finding, Group, MetricResult } from "../api/types";
 import { useCan } from "../auth/AuthContext";
 import { AiVerdictBadge, AiVerdictFilter, applyAiVerdictFilter } from "../components/AiVerdictBadge";
 import { DueBadge } from "../components/DueBadge";
 import { SeverityBadge } from "../components/SeverityBadge";
+import { KevBadge, formatPercent } from "../components/ThreatIntel";
 import { MONO } from "../components/ui";
 import { SEVERITY_ORDER } from "../theme/severity";
 
 const STATUSES = ["new", "triaged", "confirmed", "in_progress", "false_positive", "risk_accepted", "fixed"];
 const UNASSIGNED = "__none";
-const ORDERS = ["last_seen", "due_at", "severity", "number"] as const;
+// Все открытые статусы разом — так открывается список с плитки дашборда
+const OPEN = "open";
+const EPSS_STEPS = [1, 10, 50] as const;
+const ORDERS = ["last_seen", "due_at", "severity", "number", "epss_max"] as const;
 const CELL = { padding: "8px 12px" } as const;
 const HEAD = { padding: "8px 12px", fontWeight: 500 } as const;
 
 export function Findings() {
   const { t } = useTranslation();
   const can = useCan();
+  // Начальные фильтры из адреса: /vulnerabilities?kev=true&status=open&entity_id=…
+  const [searchParams] = useSearchParams();
   const [findings, setFindings] = useState<Finding[] | null>(null);
   const [entities, setEntities] = useState<EntityNode[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [severityFilter, setSeverityFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [entityFilter, setEntityFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get("status") ?? "");
+  const [entityFilter, setEntityFilter] = useState(() => searchParams.get("entity_id") ?? "");
   const [withChildren, setWithChildren] = useState(true);
   const [teamFilter, setTeamFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [aiFilter, setAiFilter] = useState("");
   const [hasMemory, setHasMemory] = useState(false);
+  const [kevOnly, setKevOnly] = useState(() => searchParams.get("kev") === "true");
+  const [minEpss, setMinEpss] = useState("");
+  const [hasBdu, setHasBdu] = useState(false);
+  const [cweCategory, setCweCategory] = useState("");
+  const [categories, setCategories] = useState<string[]>([]);
   const [order, setOrder] = useState<(typeof ORDERS)[number]>("last_seen");
   const [tags, setTags] = useState<string[]>([]);
   const requestId = useRef(0);
@@ -39,7 +51,8 @@ export function Findings() {
   const load = useCallback(() => {
     const params = new URLSearchParams();
     if (severityFilter) params.set("severity", severityFilter);
-    if (statusFilter) params.set("status", statusFilter);
+    if (statusFilter === OPEN) OPEN_STATUSES.forEach((st) => params.append("status", st));
+    else if (statusFilter) params.set("status", statusFilter);
     if (entityFilter) {
       params.set("entity_id", entityFilter);
       if (withChildren) params.set("include_descendants", "true");
@@ -50,6 +63,10 @@ export function Findings() {
     if (overdueOnly) params.set("overdue", "true");
     applyAiVerdictFilter(params, aiFilter);
     if (hasMemory) params.set("has_memory", "true");
+    if (kevOnly) params.set("kev", "true");
+    if (minEpss) params.set("min_epss", String(Number(minEpss) / 100));
+    if (hasBdu) params.set("has_bdu", "true");
+    if (cweCategory) params.set("cwe_category", cweCategory);
     params.set("order", order);
     params.set("limit", "200");
     // Фильтры меняются быстрее, чем приходят ответы — игнорируем устаревший ответ,
@@ -58,7 +75,7 @@ export function Findings() {
     void apiJson<Finding[]>(`/api/v1/findings?${params}`).then((r) => {
       if (id === requestId.current) setFindings(r.data ?? []);
     });
-  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter, tagFilter, overdueOnly, aiFilter, hasMemory, order]);
+  }, [severityFilter, statusFilter, entityFilter, withChildren, teamFilter, tagFilter, overdueOnly, aiFilter, hasMemory, kevOnly, minEpss, hasBdu, cweCategory, order]);
 
   useEffect(load, [load]);
 
@@ -67,6 +84,16 @@ export function Findings() {
       setEntities([...(r.data ?? [])].sort((a, b) => a.path.localeCompare(b.path))),
     );
     void apiJson<string[]>("/api/v1/tags").then((r) => setTags(r.data ?? []));
+    // Отдельного списка категорий нет — берём категории открытых находок из метрик
+    void apiJson<MetricResult>("/api/v1/metrics/aggregate", "POST", { metric: "count", group_by: "cwe_category" }).then(
+      (r) =>
+        setCategories(
+          (r.data?.rows ?? [])
+            .map((row) => row.key)
+            .filter((k): k is string => !!k)
+            .sort((a, b) => a.localeCompare(b)),
+        ),
+    );
   }, []);
 
   const canSeeGroups = can("group:read");
@@ -113,6 +140,7 @@ export function Findings() {
           <option value="">
             {t("status.label")}: {t("vulns.all")}
           </option>
+          <option value={OPEN}>{t("vulns.allOpen")}</option>
           {STATUSES.map((st) => (
             <option key={st} value={st}>
               {t(`status.${st}`)}
@@ -177,6 +205,46 @@ export function Findings() {
           <input type="checkbox" checked={hasMemory} onChange={(e) => setHasMemory(e.target.checked)} />
           {t("vulns.hasMemory")}
         </label>
+        <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={kevOnly} onChange={(e) => setKevOnly(e.target.checked)} />
+          {t("vulns.kevOnly")}
+        </label>
+        <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={hasBdu} onChange={(e) => setHasBdu(e.target.checked)} />
+          {t("vulns.hasBdu")}
+        </label>
+        <select
+          style={{ ...inputStyle, minWidth: 120 }}
+          value={minEpss}
+          onChange={(e) => setMinEpss(e.target.value)}
+          aria-label={t("vulns.minEpss")}
+        >
+          <option value="">
+            {t("vulns.minEpss")}: {t("vulns.all")}
+          </option>
+          {EPSS_STEPS.map((n) => (
+            <option key={n} value={n}>
+              {t("vulns.epssFrom", { value: n })}
+            </option>
+          ))}
+        </select>
+        {categories.length > 0 && (
+          <select
+            style={{ ...inputStyle, minWidth: 160, maxWidth: 260 }}
+            value={cweCategory}
+            onChange={(e) => setCweCategory(e.target.value)}
+            aria-label={t("vulns.cweCategory")}
+          >
+            <option value="">
+              {t("vulns.cweCategory")}: {t("vulns.all")}
+            </option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        )}
         <AiVerdictFilter value={aiFilter} onChange={setAiFilter} style={{ ...inputStyle, minWidth: 160 }} />
         <select
           style={{ ...inputStyle, minWidth: 160 }}
@@ -212,6 +280,8 @@ export function Findings() {
                 <th style={HEAD}>{t("vulns.file")}</th>
                 <th style={HEAD}>{t("status.label")}</th>
                 <th style={HEAD}>{t("due.label")}</th>
+                <th style={HEAD}>{t("vulns.epss")}</th>
+                <th style={HEAD}>{t("vulns.kev")}</th>
                 <th style={HEAD}>{t("ai.verdict.label")}</th>
                 <th style={HEAD}>{t("vulns.lastSeen")}</th>
               </tr>
@@ -269,6 +339,10 @@ export function Findings() {
                   <td style={{ ...CELL, fontSize: 12 }}>
                     <DueBadge dueAt={f.due_at} status={f.status} />
                   </td>
+                  <td style={{ ...CELL, ...MONO, whiteSpace: "nowrap" }}>
+                    {f.epss_max != null ? formatPercent(f.epss_max) : t("common.none")}
+                  </td>
+                  <td style={CELL}>{f.kev && <KevBadge compact />}</td>
                   <td style={CELL}>
                     <AiVerdictBadge verdict={f.ai_verdict} />
                   </td>

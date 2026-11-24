@@ -46,6 +46,8 @@ type Tile = {
   // percent — доля 0–1, points — уже проценты 0–100 (ai_agreement)
   format: "count" | "percent" | "points" | "days";
   alert?: boolean;
+  // переход в отфильтрованный список «Уязвимости»
+  link?: string;
 };
 const TILES: Tile[] = [
   { id: "open", query: { metric: "count" }, format: "count" },
@@ -53,6 +55,8 @@ const TILES: Tile[] = [
   { id: "slaRatio", query: { metric: "sla_ratio" }, format: "percent" },
   { id: "mttr", query: { metric: "mttr_days" }, format: "days" },
   { id: "aiAgreement", query: { metric: "ai_agreement" }, format: "points" },
+  // count считает только открытые — список тоже открываем с открытыми статусами
+  { id: "kev", query: { metric: "count", filters: { kev: true } }, format: "count", link: "/vulnerabilities?kev=true&status=open" },
 ];
 const WEEKLY: {
   id: "opened" | "resolved";
@@ -128,6 +132,8 @@ function insightKey(
       return `dashboard.insights.${delta > 0 ? "openUp" : delta < 0 ? "openDown" : "openFlat"}`;
     case "overdue":
       return `dashboard.insights.${value > 0 ? "overdueSome" : "overdueNone"}`;
+    case "kev":
+      return `dashboard.insights.${value > 0 ? "kevSome" : "kevNone"}`;
     case "slaRatio":
       return `dashboard.insights.${value >= 1 ? "slaAll" : "slaSome"}`;
     default:
@@ -140,8 +146,10 @@ function MetricTile({
   row,
   period,
   delta,
+  entityId,
 }: {
   tile: Tile;
+  entityId?: string;
   row: MetricRow | null | undefined;
   period: MetricPeriod;
   // появилось минус закрыто за период; только у «Открыто»
@@ -152,8 +160,9 @@ function MetricTile({
   const alarm = tile.alert && !!value;
   const periodText = t(`dashboard.periods.${period}`);
   const insight = value === undefined ? null : insightKey(tile, value, delta);
-  return (
-    <div className="dash-card">
+  const kevAlarm = tile.id === "kev" && !!value;
+  const body = (
+    <>
       <div className="stat-top">
         <span className="stat-label">{t(`dashboard.tiles.${tile.id}`)}</span>
         {tile.id === "open" && delta != null && (
@@ -176,7 +185,7 @@ function MetricTile({
       </div>
       <div
         className="stat-value"
-        style={{ color: alarm ? "var(--sev-critical)" : undefined }}
+        style={{ color: alarm || kevAlarm ? "var(--sev-critical)" : undefined }}
       >
         {formatValue(tile, value)}
       </div>
@@ -189,7 +198,14 @@ function MetricTile({
           count: row?.count ?? 0,
         })}
       </div>
-    </div>
+    </>
+  );
+  if (!tile.link) return <div className="dash-card">{body}</div>;
+  const href = entityId ? `${tile.link}&entity_id=${encodeURIComponent(entityId)}` : tile.link;
+  return (
+    <Link to={href} className="dash-card" style={{ color: "inherit", textDecoration: "none" }} aria-label={t(`dashboard.tiles.${tile.id}`)}>
+      {body}
+    </Link>
   );
 }
 
@@ -384,6 +400,7 @@ export function Dashboard() {
             row={tileRows[tile.id]}
             period={period}
             delta={tile.id === "open" ? delta : undefined}
+            entityId={entityId}
           />
         ))}
         <div className="dash-card">

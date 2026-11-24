@@ -20,6 +20,7 @@ const NAV_ITEMS: { to: string; key: string; end?: boolean; perm?: string }[] = [
   { to: "/groups", key: "nav.groups" },
   { to: "/roles", key: "nav.rolesNav" },
   { to: "/audit", key: "nav.audit", perm: "audit:read" },
+  { to: "/intel", key: "nav.intel", perm: "intel:manage" },
   { to: "/service-accounts", key: "nav.serviceAccounts", perm: "token:manage" },
 ];
 

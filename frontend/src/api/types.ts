@@ -58,6 +58,50 @@ export interface Finding {
   /** Правило команды, подсказанное находке (этап 9) */
   memory_id: string | null;
   memory: MemoryBrief | null;
+  /** Сводные поля обогащения (этап 10) */
+  cves: string[];
+  epss_max: number | null;
+  kev: boolean;
+  has_bdu: boolean;
+}
+
+export const INTEL_SOURCES = ["epss", "kev", "bdu", "cwe"] as const;
+export type IntelSourceName = (typeof INTEL_SOURCES)[number];
+
+/** Состояние справочника — GET /intel */
+export interface IntelSource {
+  source: IntelSourceName;
+  status: "idle" | "loading" | "ok" | "failed";
+  loaded_at: string | null;
+  loaded_by: string | null;
+  file_date: string | null;
+  record_count: number | null;
+  error: string | null;
+  stale: boolean;
+  stale_after_days: number | null;
+}
+
+export interface IntelKev {
+  date_added: string | null;
+  due_date: string | null;
+  name: string | null;
+  ransomware: boolean;
+}
+
+export interface IntelCve {
+  id: string;
+  epss: number | null;
+  percentile: number | null;
+  kev: IntelKev | null;
+  bdu: { id: string; name: string | null; severity: string | null }[];
+}
+
+/** Блок «Угрозы» в карточке находки */
+export interface FindingIntel {
+  cwe: { id: string; name: string | null; category: string | null } | null;
+  cves: IntelCve[];
+  stale: IntelSourceName[];
+  sources: Partial<Record<IntelSourceName, string | null>>;
 }
 
 /** Событие окна для сайдбара: число предложенных правил могло измениться */
@@ -167,6 +211,7 @@ export interface FindingDetail extends Finding {
   code_url: string | null;
   code_url_head: string | null;
   help_text: string | null;
+  intel: FindingIntel | null;
 }
 
 export interface FindingEvent {
@@ -311,7 +356,7 @@ export interface NoisyRule {
 }
 
 export type MetricName = "count" | "opened" | "resolved" | "overdue" | "sla_ratio" | "mttr_days" | "ai_agreement";
-export type MetricGroupBy = "none" | "severity" | "scanner" | "team" | "entity" | "week" | "ai_agent" | "ai_model";
+export type MetricGroupBy = "none" | "severity" | "scanner" | "team" | "entity" | "week" | "ai_agent" | "ai_model" | "cwe_category";
 export type MetricPeriod = "7d" | "30d" | "90d" | "365d";
 
 /** JSON виджета дашборда — то же, что принимает POST /metrics/aggregate */
@@ -319,7 +364,7 @@ export interface MetricQuery {
   metric: MetricName;
   group_by?: MetricGroupBy;
   period?: MetricPeriod;
-  filters?: { severity?: Severity[]; scanner?: string; entity_id?: string; tag?: string };
+  filters?: { severity?: Severity[]; scanner?: string; entity_id?: string; tag?: string; kev?: boolean };
 }
 
 export interface MetricRow {

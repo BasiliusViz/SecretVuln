@@ -85,10 +85,20 @@
 - `filters.kev: true|false`. Плитка «Открытых в KEV»: `{"metric": "count", "filters": {"kev": true}}`
   (метрика `count` уже считает только открытые), переход — `/findings?kev=true` с открытыми статусами.
 
+## Фронтенд (задачи 10–14) — написан 22–24.11, не закоммичен, тесты не гонялись
+
+- `pages/Intel.tsx` (+ маршрут, пункт сайдбара по `intel:manage`), `components/ThreatIntel.tsx`
+  (блок «Угрозы», `KevBadge`, `formatPercent`) в `FindingWindow.tsx`, типы в `api/types.ts`.
+- `Findings.tsx`: колонки EPSS/KEV, фильтры (KEV, БДУ, EPSS от 1/10/50 %, категория CWE — из метрик),
+  сортировка `epss_max`, статус «Все открытые», начальные фильтры из адреса (`kev`, `status=open`, `entity_id`).
+- `Dashboard.tsx`: плитка `kev` — ссылка на `/vulnerabilities?kev=true&status=open[&entity_id]`.
+- e2e: `intel.spec.ts` (trivy.sarif → загрузка KEV через страницу → плашка → фильтр), `/intel` в `pages.spec.ts`.
+- 24.11: `/sv-check` зелёный (pytest, build, e2e 22/22). Чинилось одно: в `intel.spec.ts` кнопку «Загрузить
+  файл» искать с `exact: true` — `<input type="file">` с подписью «Загрузить файл: …» тоже роль button.
+
 ## Что открыто
 
-- **Фронтенд — задачи 10–14** плана: страница `/intel`, блок «Угрозы» в SV-N, колонки/фильтры в
-  «Уязвимостях», плитка на дашборде, e2e `intel.spec.ts` (KEV-фикстура — `backend/tests/fixtures/intel/kev.json`).
+- **Дальше**: `/sv-check` → починить упавшее → коммит → ревью `sv-reviewer` по всему диффу этапа (бэкенд + фронтенд).
 - `backfill-intel` берёт CVE только из `raw` (там нет правила SARIF): CVE из свойств правила у старых
   находок появятся после следующего импорта того же отчёта.
 - У БДУ нет даты файла (`file_date = null`) — в карточке показывать `loaded_at`.

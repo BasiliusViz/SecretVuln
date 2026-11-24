@@ -19,6 +19,7 @@ import { DueBadge } from "../components/DueBadge";
 import { Modal } from "../components/Modal";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { SimilarFindings } from "../components/SimilarFindings";
+import { ThreatIntel } from "../components/ThreatIntel";
 import { MONO, PRIMARY_BUTTON, formatDate, formatDateTime } from "../components/ui";
 
 const SECTION = { marginBottom: 16 } as const;
@@ -275,6 +276,8 @@ export function FindingWindow() {
           </div>
         )}
       </section>
+
+      {finding.intel && <ThreatIntel intel={finding.intel} />}
 
       <section className="card" style={SECTION}>
         <div className="section-label">{t("window.howToFix")}</div>

@@ -11,6 +11,7 @@ import { Findings } from "./pages/Findings";
 import { Groups } from "./pages/Groups";
 import { Imports } from "./pages/Imports";
 import { Inbox } from "./pages/Inbox";
+import { Intel } from "./pages/Intel";
 import { Login } from "./pages/Login";
 import { Memories } from "./pages/Memories";
 import { MyVulns } from "./pages/MyVulns";
@@ -62,6 +63,7 @@ export function App() {
               <Route path="sla" element={<SlaPolicies />} />
               <Route path="memories" element={<Memories />} />
               <Route path="audit" element={<Audit />} />
+              <Route path="intel" element={<Intel />} />
               <Route path="service-accounts" element={<ServiceAccounts />} />
               {/* старые адреса — чтобы не ломались сохранённые ссылки */}
               <Route path="assets" element={<Navigate to="/projects" replace />} />
